@@ -252,12 +252,12 @@ std::cout << "G" << std::endl;//TODO
 //TODO  LIB_CORAL_DEVICE* device = opendevice(coralcontext, 0, "mobilenet_v1_1.0_224_quant_edgetpu.tflite");// works
 //TODO  LIB_CORAL_DEVICE* device = opendevice(coralcontext, 0, "mobilenet_v2_1.0_224_quant_edgetpu.tflite");// works
 
-  LIB_CORAL_DEVICE* device = opendevice(coralcontext, 0, "ssd_mobilenet_v1_coco_quant_postprocess_edgetpu.tflite");
+//TODO  LIB_CORAL_DEVICE* device = opendevice(coralcontext, 0, "ssd_mobilenet_v1_coco_quant_postprocess_edgetpu.tflite");
 //TODO  LIB_CORAL_DEVICE* device = opendevice(coralcontext, 0, "efficientnet-edgetpu-S_quant_edgetpu.tflite");// works
 
 //TODO  LIB_CORAL_DEVICE* device = opendevice(coralcontext, 0, "ssd_mobilenet_v2_coco_quant_postprocess_edgetpu.tflite");
 //TODO  LIB_CORAL_DEVICE* device = opendevice(coralcontext, 0, "efficientdet_lite3_512_ptq_edgetpu.tflite");
-//TODO  LIB_CORAL_DEVICE* device = opendevice(coralcontext, 0, "ssdlite_mobiledet_coco_qat_postprocess_edgetpu.tflite");
+  LIB_CORAL_DEVICE* device = opendevice(coralcontext, 0, "ssdlite_mobiledet_coco_qat_postprocess_edgetpu.tflite");
   if (device == nullptr)
   {
     std::cout << "Failed to open coral device" << std::endl;

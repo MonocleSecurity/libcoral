@@ -260,9 +260,182 @@ int CheckInputSize(const TfLiteTensor& tensor, size_t size)
   return 0;
 }
 
+template <typename T>
+struct BBox {
+  // Creates a `BBox` (box-corner encoding) from centroid box encodings.
+  // @param center_y Box center y-coordinate.
+  // @param center_x Box center x-coordinate.
+  // @param height Box height.
+  // @param width Box width.
+  // @returns A `BBox` instance.
+  static BBox<T> FromCenterSize(T center_y, T center_x, T height, T width) {
+    const auto half_height = height / 2;
+    const auto half_width = width / 2;
+    return BBox<T>{center_y - half_height,  // ymin
+                   center_x - half_width,   // xmin
+                   center_y + half_height,  // ymax
+                   center_x + half_width};  // xmax
+  }
+
+  // The box y-minimum (top-most) point.
+  T ymin;
+  // The box x-minimum (left-most) point.
+  T xmin;
+  // The box y-maximum (bottom-most) point.
+  T ymax;
+  // The box x-maximum (right-most) point.
+  T xmax;
+
+  // Gets the box width.
+  T width() const { return xmax - xmin; }
+  // Gets the box height.
+  T height() const { return ymax - ymin; }
+  // Gets the box area.
+  T area() const { return width() * height(); }
+  // Checks whether the box is a valid rectangle (width >= 0 and height >= 0).
+  bool valid() const { return xmin <= xmax && ymin <= ymax; }
+};
+
+template <typename T>
+bool operator==(const BBox<T>& a, const BBox<T>& b) {
+  return a.ymin == b.ymin &&  //
+         a.xmin == b.xmin &&  //
+         a.ymax == b.ymax &&  //
+         a.xmax == b.xmax;
+}
+
+template <typename T>
+bool operator!=(const BBox<T>& a, const BBox<T>& b) {
+  return !(a == b);
+}
+
+template <typename T>
+std::string ToString(const BBox<T>& bbox) {
+  return absl::Substitute("BBox(ymin=$0,xmin=$1,ymax=$2,xmax=$3)", bbox.ymin,
+                          bbox.xmin, bbox.ymax, bbox.xmax);
+}
+
+template <typename T>
+std::ostream& operator<<(std::ostream& stream, const BBox<T>& bbox) {
+  return stream << ToString(bbox);
+}
+
+// Gets a `BBox` representing the intersection between two given boxes.
+template <typename T>
+BBox<T> Intersection(const BBox<T>& a, const BBox<T>& b) {
+  return {std::max(a.ymin, b.ymin),  //
+          std::max(a.xmin, b.xmin),  //
+          std::min(a.ymax, b.ymax),  //
+          std::min(a.xmax, b.xmax)};
+}
+
+// Gets a `BBox` representing the union of two given boxes.
+template <typename T>
+BBox<T> Union(const BBox<T>& a, const BBox<T>& b) {
+  return {std::min(a.ymin, b.ymin),  //
+          std::min(a.xmin, b.xmin),  //
+          std::max(a.ymax, b.ymax),  //
+          std::max(a.xmax, b.xmax)};
+}
+
+// Gets the intersection-over-union value for two boxes.
+template <typename T>
+float IntersectionOverUnion(const BBox<T>& a, const BBox<T>& b) {
+  CHECK(a.valid());
+  CHECK(b.valid());
+  const auto intersection = Intersection(a, b);
+  if (!intersection.valid()) return T(0);
+  const auto common_area = intersection.area();
+  return common_area / (a.area() + b.area() - common_area);
+}
+
+struct Object {
+  // The class label id.
+  int id;
+  // The prediction score.
+  float score;
+  // A `BBox` defining the bounding-box (ymin,xmin,ymax,xmax).
+  BBox<float> bbox;
+};
+
+struct ObjectComparator {
+  bool operator()(const Object& lhs, const Object& rhs) const {
+    return std::tie(lhs.score, lhs.id) > std::tie(rhs.score, rhs.id);
+  }
+};
+
+std::vector<Object> GetDetectionResults(absl::Span<const float> bboxes,
+                                        absl::Span<const float> ids,
+                                        absl::Span<const float> scores,
+                                        size_t count, float threshold,
+                                        size_t top_k) {
+  std::priority_queue<Object, std::vector<Object>, ObjectComparator> q;
+  for (int i = 0; i < count; ++i) {
+    const int id = std::round(ids[i]);
+    const float score = scores[i];
+    if (score < threshold) continue;
+    const float ymin = std::max(0.0f, bboxes[4 * i]);
+    const float xmin = std::max(0.0f, bboxes[4 * i + 1]);
+    const float ymax = std::min(1.0f, bboxes[4 * i + 2]);
+    const float xmax = std::min(1.0f, bboxes[4 * i + 3]);
+    q.push(Object{id, score, BBox<float>{ymin, xmin, ymax, xmax}});
+    if (q.size() > top_k) q.pop();
+  }
+
+  std::vector<Object> ret;
+  ret.reserve(q.size());
+  while (!q.empty()) {
+    ret.push_back(q.top());
+    q.pop();
+  }
+  std::reverse(ret.begin(), ret.end());
+  return ret;
+}
+
+std::vector<Object> GetDetectionResults(
+    const tflite::Interpreter& interpreter,
+    float threshold = -std::numeric_limits<float>::infinity(),
+    size_t top_k = std::numeric_limits<size_t>::max())
+{
+  absl::Span<const float> bboxes, ids, scores, count;
+  // If a model has signature, we use the signature output tensor names to parse
+  // the results. Otherwise, we parse the results based on some assumption of
+  // the output tensor order and size.
+  if (!interpreter.signature_def_names().empty()) {
+    CHECK_EQ(interpreter.signature_def_names().size(), 1);
+    VLOG(1) << "Signature name: " << *interpreter.signature_def_names()[0];
+    const auto& signature_output_map = interpreter.signature_outputs(
+        interpreter.signature_def_names()[0]->c_str());
+    CHECK_EQ(signature_output_map.size(), 4);
+    count = TensorData<float>(
+        *interpreter.tensor(signature_output_map.at("output_0")));
+    scores = TensorData<float>(
+        *interpreter.tensor(signature_output_map.at("output_1")));
+    ids = TensorData<float>(
+        *interpreter.tensor(signature_output_map.at("output_2")));
+    bboxes = TensorData<float>(
+        *interpreter.tensor(signature_output_map.at("output_3")));
+  } else if (interpreter.output_tensor(3)->bytes / sizeof(float) == 1) {
+    bboxes = TensorData<float>(*interpreter.output_tensor(0));
+    ids = TensorData<float>(*interpreter.output_tensor(1));
+    scores = TensorData<float>(*interpreter.output_tensor(2));
+    count = TensorData<float>(*interpreter.output_tensor(3));
+  } else {
+    scores = TensorData<float>(*interpreter.output_tensor(0));
+    bboxes = TensorData<float>(*interpreter.output_tensor(1));
+    count = TensorData<float>(*interpreter.output_tensor(2));
+    ids = TensorData<float>(*interpreter.output_tensor(3));
+  }
+  CHECK_EQ(bboxes.size(), 4 * ids.size());
+  CHECK_EQ(bboxes.size(), 4 * scores.size());
+  CHECK_EQ(count.size(), 1);
+  return GetDetectionResults(bboxes, ids, scores, static_cast<size_t>(count[0]), threshold, top_k);
+}
+
+
 std::pair<int, std::vector<float>> RunInference(const std::vector<uint8_t>& input_data, tflite::Interpreter* interpreter)//TODO tidy up
 {
-  std::cout << "running " << input_data.size() << " " << interpreter->inputs().size() << " " << interpreter->tensor(interpreter->inputs()[0])->dims->data[0] << " " << interpreter->tensor(interpreter->inputs()[0])->dims->data[1] << " " << interpreter->tensor(interpreter->inputs()[0])->dims->data[2] << " " << interpreter->tensor(interpreter->inputs()[0])->dims->data[3] << std::endl;//TODO
+//TODO  std::cout << "running " << input_data.size() << " " << interpreter->inputs().size() << " " << interpreter->tensor(interpreter->inputs()[0])->dims->data[0] << " " << interpreter->tensor(interpreter->inputs()[0])->dims->data[1] << " " << interpreter->tensor(interpreter->inputs()[0])->dims->data[2] << " " << interpreter->tensor(interpreter->inputs()[0])->dims->data[3] << std::endl;//TODO
 
 //TODO  const int input_tensor_index = interpreter->inputs()[0];
 //TODO  TfLiteTensor* input_tensor = interpreter->tensor(input_tensor_index);
@@ -277,7 +450,7 @@ std::pair<int, std::vector<float>> RunInference(const std::vector<uint8_t>& inpu
   uint8_t* input = interpreter->typed_input_tensor<uint8_t>(0);
   std::memcpy(input, input_data.data(), input_data.size());
 
-  std::cout << "invoking " << interpreter << " " << input_data.size() << std::endl;//TODO
+//  std::cout << "invoking " << interpreter << " " << input_data.size() << std::endl;//TODO
 
   const TfLiteStatus status = interpreter->Invoke();
   if (status != TfLiteStatus::kTfLiteOk)
@@ -287,10 +460,10 @@ std::pair<int, std::vector<float>> RunInference(const std::vector<uint8_t>& inpu
   }
 
 //TODO is this correct? no, we want object detector results, not this shit
-  for (auto result : coral::GetClassificationResults(*interpreter, 0.0f, /*top_k=*/3)) {
+/*  for (auto result : coral::GetClassificationResults(*interpreter, 0.0f, top_k=3)) {
     std::cout << "---------------------------" << std::endl;
     std::cout << "Score: " << result.score << std::endl;
-  }
+  }*/
 
 
 
@@ -298,38 +471,43 @@ std::pair<int, std::vector<float>> RunInference(const std::vector<uint8_t>& inpu
   const auto& output_indices = interpreter->outputs();
   const int num_outputs = output_indices.size();
   int out_idx = 0;
-  for (int i = 0; i < num_outputs; ++i)
+//TODO  for (int i = 0; i < num_outputs; ++i)
   {
-    const auto* out_tensor = interpreter->tensor(output_indices[i]);
-    assert(out_tensor != nullptr);
-    if (out_tensor->type == kTfLiteUInt8)
+//TODO    const auto* out_tensor = interpreter->tensor(output_indices[i]);
+
+    const std::vector<Object> objects = GetDetectionResults(*interpreter);
+
+//    std::cout << objects.size() << std::endl;//TODO
+    for (auto o : objects)
     {
-      const int num_values = out_tensor->bytes;
-      output_data.resize(out_idx + num_values);
-      const uint8_t* output = interpreter->typed_output_tensor<uint8_t>(i);
-      for (int j = 0; j < num_values; ++j)
+      if (o.id == 0 || o.id == 1)
       {
-        output_data[out_idx++] = (output[j] - out_tensor->params.zero_point) * out_tensor->params.scale;
-	std::cout << output_data[out_idx - 1] << std::endl;//TODO
+        if (o.score > 0.7)
+	{
+          std::cout << o.id << " " << o.score << std::endl;//TODO
+	}  
       }
     }
-    else if (out_tensor->type == kTfLiteFloat32)//TODO never true I think
-    {
-      const int num_values = out_tensor->bytes / sizeof(float);
-      output_data.resize(out_idx + num_values);
-      const float* output = interpreter->typed_output_tensor<float>(i);
-      for (int j = 0; j < num_values; ++j)
-      {
-        output_data[out_idx++] = output[j];
-//TODO	std::cout << output_data[out_idx - 1] << std::endl;//TODO
-      }
+
+
+
+
+//TODO
+/*const std::vector<int>& results = interpreter->outputs();
+TfLiteTensor* outputLocations = interpreter->tensor(results[0]);
+TfLiteTensor* outputClasses   = interpreter->tensor(results[1]);
+float *data = tflite::GetTensorData<float>(outputClasses);
+for(int i=0;i<NUM_RESULTS;i++)
+{
+   for(int j=1;j<NUM_CLASSES;j++)
+   {
+      auto expit = [](float x) {return 1.f/(1.f + std::exp(-x));};
+      float score = expit(data[i*NUM_CLASSES+j]); // ¿? This does not seem to be correct.
     }
-    else
-    {
-      std::cerr << "Tensor " << out_tensor->name << " has unsupported output type: " << out_tensor->type << std::endl;
-    }
+}*/
+
   }
-  std::cout << "finished " << interpreter << " " << input_data.size() << " " << output_data.size() << std::endl;//TODO
+//  std::cout << "finished " << interpreter << " " << input_data.size() << " " << output_data.size() << std::endl;//TODO
   return std::make_pair(0, output_data);
 }
 
@@ -379,11 +557,13 @@ LIB_CORAL_MODULE_API const char* LibCoralGetDevicePath(LIB_CORAL_CONTEXT* contex
 
 LIB_CORAL_MODULE_API LIB_CORAL_DEVICE* LibCoralOpenDevice(LIB_CORAL_CONTEXT* context, const size_t index, const char* model)
 {
-  std::cout << "LibCoralOpenDevice 1" << std::endl;//TODO
+  std::cout << "LibCoralOpenDevice 1a" << std::endl;//TODO
   // Load model from disk
   context->flatbuffermodel_ = tflite::FlatBufferModel::BuildFromFile(model);
+  std::cout << "LibCoralOpenDevice 1b" << std::endl;//TODO
   if (context->flatbuffermodel_ == nullptr)
   {
+  std::cout << "LibCoralOpenDevice 1c" << std::endl;//TODO
     return nullptr;
   }
   std::cout << "LibCoralOpenDevice 2 " << (int)((context->records_[index].type_ == LIB_CORAL_DEVICE_TYPE::PCI) ? edgetpu::DeviceType::kApexPci : edgetpu::DeviceType::kApexUsb) << " " << LibCoralGetDevicePath(context, index) << std::endl;//TODO
