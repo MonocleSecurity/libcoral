@@ -45,7 +45,7 @@ struct LIB_CORAL_CONTEXT
   {
   }
 
-//TODO do we need a mutex?
+//TODO do we need a mutex? probably not?
   std::unique_ptr<tflite::FlatBufferModel> flatbuffermodel_;
   std::vector<LIB_CORAL_CONTEXT_RECORD> records_;
 
@@ -66,7 +66,39 @@ struct LIB_CORAL_DEVICE
   std::unique_ptr<tflite::Interpreter> interpreter_;
   std::array<int, 3> inputshape_;
   std::array<int, 3> outputshape_;
+//TODO perhaps a std::map<LIB_CORAL_DEVICE_OUTPUT*, LIB_CORAL_DEVICE_OUTPUT_DATA>?
+//TODO then a user can use their LIB_CORAL_DEVICE to get a pointer to the output data somehow?
 
+};
+
+struct BBox
+{
+//TODO constructor
+
+//TODO rename please
+  float ymin;
+  float xmin;
+  float ymax;
+  float xmax;
+
+};
+
+struct Object
+{
+//TODO constructor
+
+//TODO rename
+  int id;
+  float score;
+  BBox bbox;
+};
+
+struct ObjectComparator
+{
+  bool operator()(const Object& lhs, const Object& rhs) const
+  {
+    return std::tie(lhs.score, lhs.id) > std::tie(rhs.score, rhs.id);
+  }
 };
 
 ///// Functions /////
@@ -137,6 +169,7 @@ std::unique_ptr<tflite::Interpreter> BuildEdgeTpuInterpreter(const tflite::FlatB
     return nullptr;
   }
 
+//TODO are we sure it's going on the edge tpu unless we do this?
 //TODO  auto* delegate = edgetpu_create_delegate(static_cast<edgetpu_device_type>(edgetpu_context->GetDeviceEnumRecord().type), edgetpu_context->GetDeviceEnumRecord().path.c_str(), nullptr, 0);//TODO delete somewhere?
 //TODO  interpreter->ModifyGraphWithDelegate({ delegate, edgetpu_free_delegate });
 //TODO  interpreter->ModifyGraphWithDelegate(delegate);
@@ -153,37 +186,6 @@ std::unique_ptr<tflite::Interpreter> BuildEdgeTpuInterpreter(const tflite::FlatB
   return interpreter;
 }
 
-//TODO move to top
-//TODO just use float I think?
-template <typename T>
-struct BBox
-{
-  T ymin;
-  T xmin;
-  T ymax;
-  T xmax;
-
-  T width() const { return xmax - xmin; }
-  T height() const { return ymax - ymin; }
-  T area() const { return width() * height(); }
-  bool valid() const { return xmin <= xmax && ymin <= ymax; }
-};
-
-struct Object
-{
-  int id;
-  float score;
-  BBox<float> bbox;
-};
-
-struct ObjectComparator
-{
-  bool operator()(const Object& lhs, const Object& rhs) const
-  {
-    return std::tie(lhs.score, lhs.id) > std::tie(rhs.score, rhs.id);
-  }
-};
-
 std::vector<Object> GetDetectionResults(absl::Span<const float> bboxes, absl::Span<const float> ids, absl::Span<const float> scores, size_t count, float threshold, size_t top_k)
 {
   std::priority_queue<Object, std::vector<Object>, ObjectComparator> q;
@@ -196,7 +198,7 @@ std::vector<Object> GetDetectionResults(absl::Span<const float> bboxes, absl::Sp
     const float xmin = std::max(0.0f, bboxes[4 * i + 1]);
     const float ymax = std::min(1.0f, bboxes[4 * i + 2]);
     const float xmax = std::min(1.0f, bboxes[4 * i + 3]);
-    q.push(Object{id, score, BBox<float>{ymin, xmin, ymax, xmax}});//TODO call constructor please
+    q.push(Object{id, score, BBox{ymin, xmin, ymax, xmax}});//TODO call constructor please
     if (q.size() > top_k) q.pop();
   }
 
