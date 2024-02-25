@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <fstream>
+#include <mutex>
 #include <numeric>
 #include <queue>
 #include <regex>
@@ -44,6 +45,7 @@ struct LIB_CORAL_CONTEXT
   {
   }
 
+//TODO do we need a mutex?
   std::unique_ptr<tflite::FlatBufferModel> flatbuffermodel_;
   std::vector<LIB_CORAL_CONTEXT_RECORD> records_;
 
@@ -59,12 +61,11 @@ struct LIB_CORAL_DEVICE
   {
   }
 
+  mutable std::mutex mutex_;
   std::shared_ptr<edgetpu::EdgeTpuContext> edgetpucontext_;
   std::unique_ptr<tflite::Interpreter> interpreter_;
   std::array<int, 3> inputshape_;
   std::array<int, 3> outputshape_;
-  std::vector<uint8_t> inputbuffer_;
-  std::vector<float> resultsbuffer_;
 
 };
 
@@ -133,70 +134,40 @@ std::unique_ptr<tflite::Interpreter> BuildEdgeTpuInterpreter(const tflite::FlatB
   std::unique_ptr<tflite::Interpreter> interpreter;
   if (tflite::InterpreterBuilder(model, resolver)(&interpreter) != kTfLiteOk)
   {
-    std::cerr << "Failed to build interpreter." << std::endl;
+    return nullptr;
   }
 
 //TODO  auto* delegate = edgetpu_create_delegate(static_cast<edgetpu_device_type>(edgetpu_context->GetDeviceEnumRecord().type), edgetpu_context->GetDeviceEnumRecord().path.c_str(), nullptr, 0);//TODO delete somewhere?
 //TODO  interpreter->ModifyGraphWithDelegate({ delegate, edgetpu_free_delegate });
 //TODO  interpreter->ModifyGraphWithDelegate(delegate);
 
-  // Bind given context with interpreter.
   interpreter->SetExternalContext(kTfLiteEdgeTpuContext, edgetpu_context);
-  //TODO if (interpreter->SetNumThreads(1) != kTfLiteOk)
+  if (interpreter->SetNumThreads(1) != kTfLiteOk)
   {
-    //TODO std::cerr << "bla." << std::endl;//TODO
+    return nullptr;
   }
-  if (interpreter->AllocateTensors() != kTfLiteOk) {
-    std::cerr << "Failed to allocate tensors." << std::endl;
+  if (interpreter->AllocateTensors() != kTfLiteOk)
+  {
+    return nullptr;
   }
   return interpreter;
 }
 
+//TODO move to top
+//TODO just use float I think?
 template <typename T>
 struct BBox
 {
-  // The box y-minimum (top-most) point.
   T ymin;
-  // The box x-minimum (left-most) point.
   T xmin;
-  // The box y-maximum (bottom-most) point.
   T ymax;
-  // The box x-maximum (right-most) point.
   T xmax;
 
-  // Gets the box width.
   T width() const { return xmax - xmin; }
-  // Gets the box height.
   T height() const { return ymax - ymin; }
-  // Gets the box area.
   T area() const { return width() * height(); }
-  // Checks whether the box is a valid rectangle (width >= 0 and height >= 0).
   bool valid() const { return xmin <= xmax && ymin <= ymax; }
 };
-
-template <typename T>
-bool operator==(const BBox<T>& a, const BBox<T>& b) {
-  return a.ymin == b.ymin &&  //
-         a.xmin == b.xmin &&  //
-         a.ymax == b.ymax &&  //
-         a.xmax == b.xmax;
-}
-
-template <typename T>
-bool operator!=(const BBox<T>& a, const BBox<T>& b) {
-  return !(a == b);
-}
-
-template <typename T>
-std::string ToString(const BBox<T>& bbox) {
-  return absl::Substitute("BBox(ymin=$0,xmin=$1,ymax=$2,xmax=$3)", bbox.ymin,
-                          bbox.xmin, bbox.ymax, bbox.xmax);
-}
-
-template <typename T>
-std::ostream& operator<<(std::ostream& stream, const BBox<T>& bbox) {
-  return stream << ToString(bbox);
-}
 
 struct Object
 {
@@ -240,6 +211,7 @@ std::vector<Object> GetDetectionResults(absl::Span<const float> bboxes, absl::Sp
   return ret;
 }
 
+//TODO
 std::vector<Object> GetDetectionResults(const tflite::Interpreter& interpreter, float threshold = -std::numeric_limits<float>::infinity(), size_t top_k = std::numeric_limits<size_t>::max())
 {
   absl::Span<const float> bboxes, ids, scores, count;
@@ -271,34 +243,6 @@ std::vector<Object> GetDetectionResults(const tflite::Interpreter& interpreter, 
   return GetDetectionResults(bboxes, ids, scores, static_cast<size_t>(count[0]), threshold, top_k);
 }
 
-
-std::pair<int, std::vector<float>> RunInference(const std::vector<uint8_t>& input_data, tflite::Interpreter* interpreter)//TODO tidy up
-{
-//TODO can do better, I think we give the input* to the main app to copy into
-  std::vector<float> output_data;
-  uint8_t* input = interpreter->typed_input_tensor<uint8_t>(0);
-  std::memcpy(input, input_data.data(), input_data.size());
-
-  const TfLiteStatus status = interpreter->Invoke();
-  if (status != TfLiteStatus::kTfLiteOk)
-  {
-    return std::make_pair(1, std::vector<float>());
-  }
-  // Collect results
-  const std::vector<Object> objects = GetDetectionResults(*interpreter);
-  for (auto o : objects)
-  {
-    if (o.id == 0 || o.id == 1)
-    {
-      if (o.score > 0.7)
-      {
-        std::cout << o.id << " " << o.score << " " << o.bbox.xmin << " " << o.bbox.ymin << std::endl;//TODO
-      }
-    }
-  }
-  return std::make_pair(0, output_data);
-}
-
 extern "C"
 {
 
@@ -310,7 +254,7 @@ LIB_CORAL_MODULE_API LIB_CORAL_CONTEXT* LibCoralInit(const char* model)
   {
     return nullptr;
   }
-  // Load devices
+  // Enumerate devices
   const std::vector<edgetpu::EdgeTpuManager::DeviceEnumerationRecord> records = edgetpu::EdgeTpuManager::GetSingleton()->EnumerateEdgeTpu();
   LIB_CORAL_CONTEXT* coralcontext = new LIB_CORAL_CONTEXT(std::move(flatbuffermodel));
   for (const edgetpu::EdgeTpuManager::DeviceEnumerationRecord& record : records)
@@ -387,7 +331,7 @@ LIB_CORAL_MODULE_API LIB_CORAL_DEVICE* LibCoralOpenDevice(LIB_CORAL_CONTEXT* con
 
   interpreter->AllocateTensors();//TODO
 
-  return new LIB_CORAL_DEVICE(edgetpucontext, std::move(interpreter), std::array<int, 3>({ inputdims->data[1], inputdims->data[2], inputdims->data[3] }), std::array<int, 3>({ outputdims->data[1], outputdims->data[2], outputdims->data[3] }));//TODO 1,2,3???
+  return new LIB_CORAL_DEVICE(edgetpucontext, std::move(interpreter), std::array<int, 3>({ inputdims->data[1], inputdims->data[2], inputdims->data[3] }), std::array<int, 3>({ outputdims->data[1], outputdims->data[2], outputdims->data[3] }));
 }
 
 LIB_CORAL_MODULE_API void LibCoralCloseDevice(LIB_CORAL_DEVICE* device)
@@ -408,25 +352,40 @@ LIB_CORAL_MODULE_API const int* const LibCoralGetOutputShape(LIB_CORAL_DEVICE* d
 
 LIB_CORAL_MODULE_API int LibCoralRun(LIB_CORAL_DEVICE* device, const uint8_t* const data, const size_t size)
 {
-  device->inputbuffer_.clear();
-  device->inputbuffer_.insert(device->inputbuffer_.begin(), data, data + size);//TODO I don't think we need this buffer
-  const std::pair<int, std::vector<float>> result = RunInference(device->inputbuffer_, device->interpreter_.get());
-  if (result.first)
+  std::lock_guard<std::mutex> lock(device->mutex_);
+  uint8_t* input = device->interpreter_->typed_input_tensor<uint8_t>(0);
+  std::memcpy(input, data, size);
+  const TfLiteStatus status = device->interpreter_->Invoke();
+  if (status != TfLiteStatus::kTfLiteOk)
   {
-    return result.first;
+    return 1;
   }
-  device->resultsbuffer_ = result.second;//TODO probably dont' want this anymore, just return the results immediately I think... but we can't return a vector...
+  // Collect results
+//TODO I think we collect all things and package it in a way that can be ready nicely
+  const std::vector<Object> objects = GetDetectionResults(*device->interpreter_);
+  for (auto o : objects)
+  {
+    if (o.id == 0 || o.id == 1)
+    {
+      if (o.score > 0.7)
+      {
+        std::cout << o.id << " " << o.score << " " << o.bbox.xmin << " " << o.bbox.ymin << std::endl;//TODO
+      }
+    }
+  }
   return 0;
 }
 
-LIB_CORAL_MODULE_API const float* const LibCoralGetResults(LIB_CORAL_DEVICE* device)
+LIB_CORAL_MODULE_API const float* const LibCoralGetResults(LIB_CORAL_DEVICE* device)//TODO changes now... returns Object* I think?
 {
-  return device->resultsbuffer_.data();
+  return nullptr;//TODO
+//TODO  return device->resultsbuffer_.data();
 }
 
-LIB_CORAL_MODULE_API size_t LibCoralGetResultsSize(LIB_CORAL_DEVICE* device)
+LIB_CORAL_MODULE_API size_t LibCoralGetResultsSize(LIB_CORAL_DEVICE* device)//TODO returns number of objects I think?
 {
-  return device->resultsbuffer_.size();
+  return 0;//TODO
+//TODO  return device->resultsbuffer_.size();
 }
 
 }
