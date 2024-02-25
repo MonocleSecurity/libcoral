@@ -406,7 +406,7 @@ LIB_CORAL_MODULE_API int LibCoralGetResultId(LIB_CORAL_DEVICE_CONTAINER* device,
 
 LIB_CORAL_MODULE_API float LibCoralGetResultScore(LIB_CORAL_DEVICE_CONTAINER* device, const size_t index)
 {
-  return 0.0f;//TODO
+  return device->results_[index].score;
 }
 
 LIB_CORAL_MODULE_API const float* const LibCoralGetResultBoundingBox(LIB_CORAL_DEVICE_CONTAINER* device, const size_t index)
