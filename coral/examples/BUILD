@@ -17,7 +17,7 @@ package(
 )
 
 cc_binary(
-    name = "classify_image",
+    name = "coral",
     srcs = ["coraldevice.h", "classify_image.cc"],
     linkshared=True,
     deps = [

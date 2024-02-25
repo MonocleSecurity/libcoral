@@ -12,8 +12,6 @@
 #include <regex>
 #include <vector>
 
-#include <iostream>//TODO
-
 #include "absl/flags/flag.h"
 #include "absl/flags/parse.h"
 #include "absl/strings/substitute.h"
@@ -29,33 +27,25 @@ struct LIB_CORAL_DEVICE;
 
 ///// Structures /////
 
-struct BBox//TODO convert to std::array<float, 4>
-{
-//TODO constructor
-
-//TODO rename please
-  float ymin;
-  float xmin;
-  float ymax;
-  float xmax;
-
-};
-
 struct Object
 {
-//TODO constructor
+  Object(const int id, const float score, const std::array<float, 4>& boundingbox)
+    : id_(id)
+    , score_(score)
+    , boundingbox_(boundingbox)
+  {
+  }
 
-//TODO rename
-  int id;
-  float score;
-  BBox bbox;
+  int id_;
+  float score_;
+  std::array<float, 4> boundingbox_; // ymin, xmin, ymax, xmax
 };
 
 struct ObjectComparator
 {
   bool operator()(const Object& lhs, const Object& rhs) const
   {
-    return std::tie(lhs.score, lhs.id) > std::tie(rhs.score, rhs.id);
+    return std::tie(lhs.score_, lhs.id_) > std::tie(rhs.score_, rhs.id_);
   }
 };
 
@@ -175,7 +165,7 @@ int SetTensorBuffer(tflite::Interpreter* interpreter, int tensor_index, const vo
   return 0;
 }
 
-std::vector<Object> GetDetectionResults(absl::Span<const float> bboxes, absl::Span<const float> ids, absl::Span<const float> scores, size_t count, float threshold, size_t top_k)
+std::vector<Object> GetDetectionResults(const absl::Span<const float> bboxes, const absl::Span<const float> ids, const absl::Span<const float> scores, const size_t count, const float threshold, const size_t topk)
 {
   std::priority_queue<Object, std::vector<Object>, ObjectComparator> q;
   for (size_t i = 0; i < count; ++i)
@@ -190,8 +180,8 @@ std::vector<Object> GetDetectionResults(absl::Span<const float> bboxes, absl::Sp
     const float xmin = std::max(0.0f, bboxes[4 * i + 1]);
     const float ymax = std::min(1.0f, bboxes[4 * i + 2]);
     const float xmax = std::min(1.0f, bboxes[4 * i + 3]);
-    q.push(Object{id, score, BBox{ymin, xmin, ymax, xmax}});//TODO call constructor please
-    if (q.size() > top_k) q.pop();
+    q.push(Object(id, score, {ymin, xmin, ymax, xmax}));
+    if (q.size() > topk) q.pop();
   }
 
   std::vector<Object> ret;
@@ -205,13 +195,12 @@ std::vector<Object> GetDetectionResults(absl::Span<const float> bboxes, absl::Sp
   return ret;
 }
 
-//TODO
-std::vector<Object> GetDetectionResults(const tflite::Interpreter& interpreter, float threshold = -std::numeric_limits<float>::infinity(), size_t top_k = std::numeric_limits<size_t>::max())
+std::vector<Object> GetDetectionResults(const tflite::Interpreter& interpreter, const float threshold, const size_t topk)
 {
-  absl::Span<const float> bboxes, ids, scores, count;
-  // If a model has signature, we use the signature output tensor names to parse
-  // the results. Otherwise, we parse the results based on some assumption of
-  // the output tensor order and size.
+  absl::Span<const float> bboxes;
+  absl::Span<const float> ids;
+  absl::Span<const float> scores;
+  absl::Span<const float> count;
   if (!interpreter.signature_def_names().empty())
   {
     const auto& signature_output_map = interpreter.signature_outputs(interpreter.signature_def_names()[0]->c_str());
@@ -234,7 +223,7 @@ std::vector<Object> GetDetectionResults(const tflite::Interpreter& interpreter, 
     count = TensorData(*interpreter.output_tensor(2));
     ids = TensorData(*interpreter.output_tensor(3));
   }
-  return GetDetectionResults(bboxes, ids, scores, static_cast<size_t>(count[0]), threshold, top_k);
+  return GetDetectionResults(bboxes, ids, scores, static_cast<size_t>(count[0]), threshold, topk);
 }
 
 extern "C"
@@ -380,39 +369,23 @@ LIB_CORAL_MODULE_API int LibCoralRun(LIB_CORAL_DEVICE_CONTAINER* device, const u
     return 1;
   }
   // Collect results
-//TODO I think we collect all things and package it in a way that can be ready nicely
-  const std::vector<Object> objects = GetDetectionResults(*device->device_->interpreter_);
-  device->results_.clear();
-  for (auto o : objects)//TODO remove
-  {
-    if (o.id == 0 || o.id == 1)
-    {
-      if (o.score > 0.7)
-      {
-        std::cout << o.id << " " << o.score << " " << o.bbox.xmin << " " << o.bbox.ymin << std::endl;//TODO
-      }
-    }
-    device->results_.push_back(o);
-  }
+  device->results_ = GetDetectionResults(*device->device_->interpreter_, std::numeric_limits<float>::lowest(), std::numeric_limits<size_t>::max());
   return 0;
 }
 
-//TODO get id, get score, get bbox(4 floats next to eachother in pointer form)
-
 LIB_CORAL_MODULE_API int LibCoralGetResultId(LIB_CORAL_DEVICE_CONTAINER* device, const size_t index)
 {
-  return device->results_[index].id;
+  return device->results_[index].id_;
 }
 
 LIB_CORAL_MODULE_API float LibCoralGetResultScore(LIB_CORAL_DEVICE_CONTAINER* device, const size_t index)
 {
-  return device->results_[index].score;
+  return device->results_[index].score_;
 }
 
 LIB_CORAL_MODULE_API const float* const LibCoralGetResultBoundingBox(LIB_CORAL_DEVICE_CONTAINER* device, const size_t index)
 {
-  return nullptr;//TODO
-//TODO  return device->resultsbuffer_.data();
+  return device->results_[index].boundingbox_.data();
 }
 
 LIB_CORAL_MODULE_API size_t LibCoralGetResultsSize(LIB_CORAL_DEVICE_CONTAINER* device)

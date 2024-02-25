@@ -47,10 +47,10 @@ EXAMPLES_OUT_DIR   := $(MAKEFILE_DIR)/out/$(CPU)/examples
 
 all:
 
-	bazel build $(BAZEL_BUILD_FLAGS) //coral/examples:classify_image \
+	bazel build $(BAZEL_BUILD_FLAGS) //coral/examples:coral \
 	                                 //coral/examples:main
 	mkdir -p $(EXAMPLES_OUT_DIR)
-	cp -f $(BAZEL_OUT_DIR)/coral/examples/libclassify_image.so \
+	cp -f $(BAZEL_OUT_DIR)/coral/examples/libcoral.so \
 	      $(BAZEL_OUT_DIR)/coral/examples/main \
 	      $(EXAMPLES_OUT_DIR)
 
