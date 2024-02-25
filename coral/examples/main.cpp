@@ -208,20 +208,17 @@ std::cout << "D" << std::endl;//TODO
   const LIB_CORAL_GET_RESULTS getresults = reinterpret_cast<LIB_CORAL_GET_RESULTS>(dlsym(module, "LibCoralGetResults"));
   const LIB_CORAL_GET_RESULTS_SIZE getresultssize = reinterpret_cast<LIB_CORAL_GET_RESULTS_SIZE>(dlsym(module, "LibCoralGetResultsSize"));
 #endif
-std::cout << "E" << std::endl;//TODO
   if ((init == nullptr) || (destroy == nullptr) || (getnumdevices == nullptr) || (getdevicetype == nullptr) || (getdevicepath == nullptr) || (opendevice == nullptr) || (closedevice == nullptr) || (getinputshape == nullptr) || (getoutputshape == nullptr) || (run == nullptr) || (getresults == nullptr) || (getresultssize == nullptr))
   {
     std::cout << "Failed to load library functions" << std::endl;
     return 2;
   }
-std::cout << "F" << std::endl;//TODO
-  LIB_CORAL_CONTEXT* coralcontext = init();
+  LIB_CORAL_CONTEXT* coralcontext = init("ssdlite_mobiledet_coco_qat_postprocess_edgetpu.tflite");
   if (coralcontext == nullptr)
   {
     std::cout << "Failed to initialise coral library" << std::endl;
     return 3;
   }
-std::cout << "F" << std::endl;//TODO
   // Enumerate devices
   const size_t numdevices = getnumdevices(coralcontext);
   std::cout << "Number of coral devices found: " << numdevices << std::endl;
@@ -230,7 +227,6 @@ std::cout << "F" << std::endl;//TODO
     //TODO
     return 4;
   }
-std::cout << "G" << std::endl;//TODO
   for (size_t deviceindex = 0; deviceindex < numdevices; ++deviceindex)
   {
     const LIB_CORAL_DEVICE_TYPE type = getdevicetype(coralcontext, deviceindex);
@@ -249,15 +245,7 @@ std::cout << "G" << std::endl;//TODO
   }
   // Open device
   std::cout << "Opening device" << std::endl;
-//TODO  LIB_CORAL_DEVICE* device = opendevice(coralcontext, 0, "mobilenet_v1_1.0_224_quant_edgetpu.tflite");// works
-//TODO  LIB_CORAL_DEVICE* device = opendevice(coralcontext, 0, "mobilenet_v2_1.0_224_quant_edgetpu.tflite");// works
-
-//TODO  LIB_CORAL_DEVICE* device = opendevice(coralcontext, 0, "ssd_mobilenet_v1_coco_quant_postprocess_edgetpu.tflite");
-//TODO  LIB_CORAL_DEVICE* device = opendevice(coralcontext, 0, "efficientnet-edgetpu-S_quant_edgetpu.tflite");// works
-
-//TODO  LIB_CORAL_DEVICE* device = opendevice(coralcontext, 0, "ssd_mobilenet_v2_coco_quant_postprocess_edgetpu.tflite");
-//TODO  LIB_CORAL_DEVICE* device = opendevice(coralcontext, 0, "efficientdet_lite3_512_ptq_edgetpu.tflite");
-  LIB_CORAL_DEVICE* device = opendevice(coralcontext, 0, "ssdlite_mobiledet_coco_qat_postprocess_edgetpu.tflite");
+  LIB_CORAL_DEVICE* device = opendevice(coralcontext, 0);
   if (device == nullptr)
   {
     std::cout << "Failed to open coral device" << std::endl;

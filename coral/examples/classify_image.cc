@@ -5,8 +5,6 @@
 
 #include <algorithm>
 #include <array>
-//TODO #include <edgetpu.h>
-//TODO #include <edgetpu_c.h>
 #include <fstream>
 #include <numeric>
 #include <queue>
@@ -15,11 +13,6 @@
 
 #include <iostream>//TODO
 
-//TODO retarded <>
-//TODO #include "tensorflow/lite/model.h"
-//TODO #include "tensorflow/lite/model_builder.h"
-//TODO #include "tensorflow/lite/builtin_op_data.h"
-//TODO #include "tensorflow/lite/kernels/register.h"
 #include "absl/flags/flag.h"
 #include "absl/flags/parse.h"
 #include "absl/strings/substitute.h"
@@ -46,11 +39,12 @@ struct LIB_CORAL_CONTEXT_RECORD
 
 struct LIB_CORAL_CONTEXT
 {
-  LIB_CORAL_CONTEXT()
+  LIB_CORAL_CONTEXT(std::unique_ptr<tflite::FlatBufferModel>&& flatbuffermodel)
+    : flatbuffermodel_(std::move(flatbuffermodel))
   {
   }
 
-  std::unique_ptr<tflite::FlatBufferModel> flatbuffermodel_;//TODO should probably be on the device instead? nevermind it should be reused the same one every time from here I think?
+  std::unique_ptr<tflite::FlatBufferModel> flatbuffermodel_;
   std::vector<LIB_CORAL_CONTEXT_RECORD> records_;
 
 };
@@ -82,33 +76,31 @@ std::vector<int> TensorShape(const TfLiteTensor& tensor)
 }
 
 template <typename T>
-absl::Span<const T> TensorData(const TfLiteTensor& tensor) {
-  return absl::MakeSpan(reinterpret_cast<const T*>(tensor.data.data),
-                        tensor.bytes / sizeof(T));
+absl::Span<const T> TensorData(const TfLiteTensor& tensor)
+{
+  return absl::MakeSpan(reinterpret_cast<const T*>(tensor.data.data), tensor.bytes / sizeof(T));
 }
 
-TfLiteFloatArray* TfLiteFloatArrayCopy(const TfLiteFloatArray* src) {
-  if (!src) return nullptr;
-
-  auto* copy = static_cast<TfLiteFloatArray*>(
-    malloc(TfLiteFloatArrayGetSizeInBytes(src->size)));
+TfLiteFloatArray* TfLiteFloatArrayCopy(const TfLiteFloatArray* src)
+{
+  if (!src)
+    return nullptr;
+  auto* copy = static_cast<TfLiteFloatArray*>(malloc(TfLiteFloatArrayGetSizeInBytes(src->size)));
   copy->size = src->size;
   std::memcpy(copy->data, src->data, src->size * sizeof(float));
   return copy;
 }
 
-TfLiteAffineQuantization* TfLiteAffineQuantizationCopy(
-  const TfLiteAffineQuantization* src) {
-  if (!src) return nullptr;
-
-  auto* copy = static_cast<TfLiteAffineQuantization*>(
-    malloc(sizeof(TfLiteAffineQuantization)));
+TfLiteAffineQuantization* TfLiteAffineQuantizationCopy(const TfLiteAffineQuantization* src) {
+  if (!src)
+    return nullptr;
+  auto* copy = static_cast<TfLiteAffineQuantization*>(malloc(sizeof(TfLiteAffineQuantization)));
   copy->scale = TfLiteFloatArrayCopy(src->scale);
   copy->zero_point = TfLiteIntArrayCopy(src->zero_point);
   copy->quantized_dimension = src->quantized_dimension;
   return copy;
 }
-//TODO
+
 int SetTensorBuffer(tflite::Interpreter* interpreter, int tensor_index, const void* buffer, size_t buffer_size)
 {
   const auto* tensor = interpreter->tensor(tensor_index);
@@ -132,7 +124,6 @@ int SetTensorBuffer(tflite::Interpreter* interpreter, int tensor_index, const vo
   }
   return 0;
 }
-
 
 std::unique_ptr<tflite::Interpreter> BuildEdgeTpuInterpreter(const tflite::FlatBufferModel& model, edgetpu::EdgeTpuContext* edgetpu_context)//TODO
 {
@@ -161,22 +152,8 @@ std::unique_ptr<tflite::Interpreter> BuildEdgeTpuInterpreter(const tflite::FlatB
 }
 
 template <typename T>
-struct BBox {
-  // Creates a `BBox` (box-corner encoding) from centroid box encodings.
-  // @param center_y Box center y-coordinate.
-  // @param center_x Box center x-coordinate.
-  // @param height Box height.
-  // @param width Box width.
-  // @returns A `BBox` instance.
-  static BBox<T> FromCenterSize(T center_y, T center_x, T height, T width) {
-    const auto half_height = height / 2;
-    const auto half_width = width / 2;
-    return BBox<T>{center_y - half_height,  // ymin
-                   center_x - half_width,   // xmin
-                   center_y + half_height,  // ymax
-                   center_x + half_width};  // xmax
-  }
-
+struct BBox
+{
   // The box y-minimum (top-most) point.
   T ymin;
   // The box x-minimum (left-most) point.
@@ -220,41 +197,10 @@ std::ostream& operator<<(std::ostream& stream, const BBox<T>& bbox) {
   return stream << ToString(bbox);
 }
 
-// Gets a `BBox` representing the intersection between two given boxes.
-template <typename T>
-BBox<T> Intersection(const BBox<T>& a, const BBox<T>& b) {
-  return {std::max(a.ymin, b.ymin),  //
-          std::max(a.xmin, b.xmin),  //
-          std::min(a.ymax, b.ymax),  //
-          std::min(a.xmax, b.xmax)};
-}
-
-// Gets a `BBox` representing the union of two given boxes.
-template <typename T>
-BBox<T> Union(const BBox<T>& a, const BBox<T>& b) {
-  return {std::min(a.ymin, b.ymin),  //
-          std::min(a.xmin, b.xmin),  //
-          std::max(a.ymax, b.ymax),  //
-          std::max(a.xmax, b.xmax)};
-}
-
-// Gets the intersection-over-union value for two boxes.
-template <typename T>
-float IntersectionOverUnion(const BBox<T>& a, const BBox<T>& b) {
-  CHECK(a.valid());
-  CHECK(b.valid());
-  const auto intersection = Intersection(a, b);
-  if (!intersection.valid()) return T(0);
-  const auto common_area = intersection.area();
-  return common_area / (a.area() + b.area() - common_area);
-}
-
-struct Object {
-  // The class label id.
+struct Object
+{
   int id;
-  // The prediction score.
   float score;
-  // A `BBox` defining the bounding-box (ymin,xmin,ymax,xmax).
   BBox<float> bbox;
 };
 
@@ -301,19 +247,11 @@ std::vector<Object> GetDetectionResults(const tflite::Interpreter& interpreter, 
   // the output tensor order and size.
   if (!interpreter.signature_def_names().empty())
   {
-    CHECK_EQ(interpreter.signature_def_names().size(), 1);
-    VLOG(1) << "Signature name: " << *interpreter.signature_def_names()[0];
-    const auto& signature_output_map = interpreter.signature_outputs(
-        interpreter.signature_def_names()[0]->c_str());
-    CHECK_EQ(signature_output_map.size(), 4);
-    count = TensorData<float>(
-        *interpreter.tensor(signature_output_map.at("output_0")));
-    scores = TensorData<float>(
-        *interpreter.tensor(signature_output_map.at("output_1")));
-    ids = TensorData<float>(
-        *interpreter.tensor(signature_output_map.at("output_2")));
-    bboxes = TensorData<float>(
-        *interpreter.tensor(signature_output_map.at("output_3")));
+    const auto& signature_output_map = interpreter.signature_outputs(interpreter.signature_def_names()[0]->c_str());
+    count = TensorData<float>(*interpreter.tensor(signature_output_map.at("output_0")));
+    scores = TensorData<float>(*interpreter.tensor(signature_output_map.at("output_1")));
+    ids = TensorData<float>(*interpreter.tensor(signature_output_map.at("output_2")));
+    bboxes = TensorData<float>(*interpreter.tensor(signature_output_map.at("output_3")));
   }
   else if (interpreter.output_tensor(3)->bytes / sizeof(float) == 1)
   {
@@ -353,7 +291,7 @@ std::pair<int, std::vector<float>> RunInference(const std::vector<uint8_t>& inpu
     {
       if (o.score > 0.7)
       {
-        std::cout << o.id << " " << o.score << " " << o.bbox.xmin << " " << o.bbox.ymin << std::endl;//TODO
+//TODO        std::cout << o.id << " " << o.score << " " << o.bbox.xmin << " " << o.bbox.ymin << std::endl;//TODO
       }
     }
   }
@@ -363,10 +301,17 @@ std::pair<int, std::vector<float>> RunInference(const std::vector<uint8_t>& inpu
 extern "C"
 {
 
-LIB_CORAL_MODULE_API LIB_CORAL_CONTEXT* LibCoralInit()
+LIB_CORAL_MODULE_API LIB_CORAL_CONTEXT* LibCoralInit(const char* model)
 {
+  // Load model from disk
+  std::unique_ptr<tflite::FlatBufferModel> flatbuffermodel = tflite::FlatBufferModel::BuildFromFile(model);
+  if (flatbuffermodel == nullptr)
+  {
+    return nullptr;
+  }
+  // Load devices
   const std::vector<edgetpu::EdgeTpuManager::DeviceEnumerationRecord> records = edgetpu::EdgeTpuManager::GetSingleton()->EnumerateEdgeTpu();
-  LIB_CORAL_CONTEXT* coralcontext = new LIB_CORAL_CONTEXT();
+  LIB_CORAL_CONTEXT* coralcontext = new LIB_CORAL_CONTEXT(std::move(flatbuffermodel));
   for (const edgetpu::EdgeTpuManager::DeviceEnumerationRecord& record : records)
   {
     if (record.type == edgetpu::DeviceType::kApexUsb)
@@ -404,39 +349,25 @@ LIB_CORAL_MODULE_API const char* LibCoralGetDevicePath(LIB_CORAL_CONTEXT* contex
   return context->records_[index].path_.c_str();
 }
 
-LIB_CORAL_MODULE_API LIB_CORAL_DEVICE* LibCoralOpenDevice(LIB_CORAL_CONTEXT* context, const size_t index, const char* model)
+LIB_CORAL_MODULE_API LIB_CORAL_DEVICE* LibCoralOpenDevice(LIB_CORAL_CONTEXT* context, const size_t index)
 {
-  std::cout << "LibCoralOpenDevice 1a" << std::endl;//TODO
-  // Load model from disk
-  context->flatbuffermodel_ = tflite::FlatBufferModel::BuildFromFile(model);
-  std::cout << "LibCoralOpenDevice 1b" << std::endl;//TODO
-  if (context->flatbuffermodel_ == nullptr)
-  {
-  std::cout << "LibCoralOpenDevice 1c" << std::endl;//TODO
-    return nullptr;
-  }
-  std::cout << "LibCoralOpenDevice 2 " << (int)((context->records_[index].type_ == LIB_CORAL_DEVICE_TYPE::PCI) ? edgetpu::DeviceType::kApexPci : edgetpu::DeviceType::kApexUsb) << " " << LibCoralGetDevicePath(context, index) << std::endl;//TODO
   // Open device
-  std::shared_ptr<edgetpu::EdgeTpuContext> edgetpucontext = edgetpu::EdgeTpuManager::GetSingleton()->OpenDevice();
-  //TODO std::shared_ptr<edgetpu::EdgeTpuContext> edgetpucontext = edgetpu::EdgeTpuManager::GetSingleton()->OpenDevice((context->records_[index].type_ == LIB_CORAL_DEVICE_TYPE::PCI) ? edgetpu::DeviceType::kApexPci : edgetpu::DeviceType::kApexUsb, LibCoralGetDevicePath(context, index));
+  std::shared_ptr<edgetpu::EdgeTpuContext> edgetpucontext = edgetpu::EdgeTpuManager::GetSingleton()->OpenDevice((context->records_[index].type_ == LIB_CORAL_DEVICE_TYPE::PCI) ? edgetpu::DeviceType::kApexPci : edgetpu::DeviceType::kApexUsb, LibCoralGetDevicePath(context, index));
   if (edgetpucontext == nullptr)
   {
     return nullptr;
   }
-  std::cout << "LibCoralOpenDevice 3" << std::endl;//TODO
   // Build model
-  std::unique_ptr<tflite::Interpreter> interpreter = std::move(BuildEdgeTpuInterpreter(*context->flatbuffermodel_, edgetpucontext.get()));//TODO pass in normal... store this value too?
+  std::unique_ptr<tflite::Interpreter> interpreter = std::move(BuildEdgeTpuInterpreter(*context->flatbuffermodel_, edgetpucontext.get()));
   if (interpreter == nullptr)
   {
     return nullptr;
   }
-  std::cout << "LibCoralOpenDevice 4 " << ((int)interpreter->tensor(interpreter->inputs()[0])->type) << std::endl;//TODO
   // Retrieve the input shape
   if (interpreter->inputs().size() == 0)
   {
     return nullptr;
   }
-  std::cout << "LibCoralOpenDevice 6" << std::endl;//TODO
   const TfLiteIntArray* inputdims = interpreter->tensor(interpreter->inputs()[0])->dims;
   if (inputdims == nullptr)
   {
@@ -455,7 +386,6 @@ LIB_CORAL_MODULE_API LIB_CORAL_DEVICE* LibCoralOpenDevice(LIB_CORAL_CONTEXT* con
 
   interpreter->AllocateTensors();//TODO
 
-  std::cout << "LibCoralOpenDevice 7 " << interpreter->outputs().size() << " " << interpreter->inputs().size() << " " << inputdims->data[0] << " " << outputdims->data[0] << std::endl;//TODO
   return new LIB_CORAL_DEVICE(edgetpucontext, std::move(interpreter), std::array<int, 3>({ inputdims->data[1], inputdims->data[2], inputdims->data[3] }), std::array<int, 3>({ outputdims->data[1], outputdims->data[2], outputdims->data[3] }));//TODO 1,2,3???
 }
 
