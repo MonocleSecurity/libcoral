@@ -75,26 +75,30 @@ std::vector<int> TensorShape(const TfLiteTensor& tensor)
   return std::vector<int>(tensor.dims->data, tensor.dims->data + tensor.dims->size);
 }
 
-template <typename T>
-absl::Span<const T> TensorData(const TfLiteTensor& tensor)
+absl::Span<const float> TensorData(const TfLiteTensor& tensor)
 {
-  return absl::MakeSpan(reinterpret_cast<const T*>(tensor.data.data), tensor.bytes / sizeof(T));
+  return absl::MakeSpan(reinterpret_cast<const float*>(tensor.data.data), tensor.bytes / sizeof(float));
 }
 
 TfLiteFloatArray* TfLiteFloatArrayCopy(const TfLiteFloatArray* src)
 {
   if (!src)
+  {
     return nullptr;
-  auto* copy = static_cast<TfLiteFloatArray*>(malloc(TfLiteFloatArrayGetSizeInBytes(src->size)));
+  }
+  TfLiteFloatArray* copy = static_cast<TfLiteFloatArray*>(malloc(TfLiteFloatArrayGetSizeInBytes(src->size)));
   copy->size = src->size;
   std::memcpy(copy->data, src->data, src->size * sizeof(float));
   return copy;
 }
 
-TfLiteAffineQuantization* TfLiteAffineQuantizationCopy(const TfLiteAffineQuantization* src) {
+TfLiteAffineQuantization* TfLiteAffineQuantizationCopy(const TfLiteAffineQuantization* src)
+{
   if (!src)
+  {
     return nullptr;
-  auto* copy = static_cast<TfLiteAffineQuantization*>(malloc(sizeof(TfLiteAffineQuantization)));
+  }
+  TfLiteAffineQuantization* copy = static_cast<TfLiteAffineQuantization*>(malloc(sizeof(TfLiteAffineQuantization)));
   copy->scale = TfLiteFloatArrayCopy(src->scale);
   copy->zero_point = TfLiteIntArrayCopy(src->zero_point);
   copy->quantized_dimension = src->quantized_dimension;
@@ -104,21 +108,18 @@ TfLiteAffineQuantization* TfLiteAffineQuantizationCopy(const TfLiteAffineQuantiz
 int SetTensorBuffer(tflite::Interpreter* interpreter, int tensor_index, const void* buffer, size_t buffer_size)
 {
   const auto* tensor = interpreter->tensor(tensor_index);
-
   auto quantization = tensor->quantization;
-  if (quantization.type != kTfLiteNoQuantization) {
+  if (quantization.type != kTfLiteNoQuantization)
+  {
     // Deep copy quantization parameters.
     if (quantization.type != kTfLiteAffineQuantization)
+    {
       return 2;
-    quantization.params = TfLiteAffineQuantizationCopy(
-      reinterpret_cast<TfLiteAffineQuantization*>(quantization.params));
+    }
+    quantization.params = TfLiteAffineQuantizationCopy(reinterpret_cast<TfLiteAffineQuantization*>(quantization.params));
   }
-
-  const auto shape = TensorShape(*tensor);
-  if (interpreter->SetTensorParametersReadOnly(
-    tensor_index, tensor->type, tensor->name,
-    std::vector<int>(shape.begin(), shape.end()), quantization,
-    reinterpret_cast<const char*>(buffer), buffer_size) != kTfLiteOk)
+  const std::vector<int> shape = TensorShape(*tensor);
+  if (interpreter->SetTensorParametersReadOnly(tensor_index, tensor->type, tensor->name, std::vector<int>(shape.begin(), shape.end()), quantization, reinterpret_cast<const char*>(buffer), buffer_size) != kTfLiteOk)
   {
     return 3;
   }
@@ -215,7 +216,7 @@ struct ObjectComparator
 std::vector<Object> GetDetectionResults(absl::Span<const float> bboxes, absl::Span<const float> ids, absl::Span<const float> scores, size_t count, float threshold, size_t top_k)
 {
   std::priority_queue<Object, std::vector<Object>, ObjectComparator> q;
-  for (int i = 0; i < count; ++i)
+  for (size_t i = 0; i < count; ++i)
   {
     const int id = std::round(ids[i]);
     const float score = scores[i];
@@ -248,24 +249,24 @@ std::vector<Object> GetDetectionResults(const tflite::Interpreter& interpreter, 
   if (!interpreter.signature_def_names().empty())
   {
     const auto& signature_output_map = interpreter.signature_outputs(interpreter.signature_def_names()[0]->c_str());
-    count = TensorData<float>(*interpreter.tensor(signature_output_map.at("output_0")));
-    scores = TensorData<float>(*interpreter.tensor(signature_output_map.at("output_1")));
-    ids = TensorData<float>(*interpreter.tensor(signature_output_map.at("output_2")));
-    bboxes = TensorData<float>(*interpreter.tensor(signature_output_map.at("output_3")));
+    count = TensorData(*interpreter.tensor(signature_output_map.at("output_0")));
+    scores = TensorData(*interpreter.tensor(signature_output_map.at("output_1")));
+    ids = TensorData(*interpreter.tensor(signature_output_map.at("output_2")));
+    bboxes = TensorData(*interpreter.tensor(signature_output_map.at("output_3")));
   }
   else if (interpreter.output_tensor(3)->bytes / sizeof(float) == 1)
   {
-    bboxes = TensorData<float>(*interpreter.output_tensor(0));
-    ids = TensorData<float>(*interpreter.output_tensor(1));
-    scores = TensorData<float>(*interpreter.output_tensor(2));
-    count = TensorData<float>(*interpreter.output_tensor(3));
+    bboxes = TensorData(*interpreter.output_tensor(0));
+    ids = TensorData(*interpreter.output_tensor(1));
+    scores = TensorData(*interpreter.output_tensor(2));
+    count = TensorData(*interpreter.output_tensor(3));
   }
   else
   {
-    scores = TensorData<float>(*interpreter.output_tensor(0));
-    bboxes = TensorData<float>(*interpreter.output_tensor(1));
-    count = TensorData<float>(*interpreter.output_tensor(2));
-    ids = TensorData<float>(*interpreter.output_tensor(3));
+    scores = TensorData(*interpreter.output_tensor(0));
+    bboxes = TensorData(*interpreter.output_tensor(1));
+    count = TensorData(*interpreter.output_tensor(2));
+    ids = TensorData(*interpreter.output_tensor(3));
   }
   return GetDetectionResults(bboxes, ids, scores, static_cast<size_t>(count[0]), threshold, top_k);
 }
@@ -291,7 +292,7 @@ std::pair<int, std::vector<float>> RunInference(const std::vector<uint8_t>& inpu
     {
       if (o.score > 0.7)
       {
-//TODO        std::cout << o.id << " " << o.score << " " << o.bbox.xmin << " " << o.bbox.ymin << std::endl;//TODO
+        std::cout << o.id << " " << o.score << " " << o.bbox.xmin << " " << o.bbox.ymin << std::endl;//TODO
       }
     }
   }
