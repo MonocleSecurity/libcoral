@@ -23,6 +23,10 @@
 #include "tensorflow/lite/interpreter.h"
 #include "coraldevice.h"
 
+///// Declarations /////
+
+struct LIB_CORAL_DEVICE;
+
 ///// Structures /////
 
 struct BBox
@@ -60,11 +64,13 @@ struct LIB_CORAL_CONTEXT_RECORD
   LIB_CORAL_CONTEXT_RECORD(const LIB_CORAL_DEVICE_TYPE type, const std::string& path)
     : type_(type)
     , path_(path)
+    , device_(nullptr)
   {
   }
 
   const LIB_CORAL_DEVICE_TYPE type_;
   const std::string path_;
+  LIB_CORAL_DEVICE* device_;
 
 };
 
@@ -77,7 +83,7 @@ struct LIB_CORAL_CONTEXT
   }
 
   const std::unique_ptr<tflite::FlatBufferModel> flatbuffermodel_;
-  const std::vector<LIB_CORAL_CONTEXT_RECORD> records_;
+  std::vector<LIB_CORAL_CONTEXT_RECORD> records_;
 
 };
 
@@ -167,33 +173,6 @@ int SetTensorBuffer(tflite::Interpreter* interpreter, int tensor_index, const vo
     return 3;
   }
   return 0;
-}
-
-std::unique_ptr<tflite::Interpreter> BuildEdgeTpuInterpreter(const tflite::FlatBufferModel& model, edgetpu::EdgeTpuContext* edgetpu_context)//TODO
-{
-  tflite::ops::builtin::BuiltinOpResolver resolver;
-  resolver.AddCustom(edgetpu::kCustomOp, edgetpu::RegisterCustomOp());
-  std::unique_ptr<tflite::Interpreter> interpreter;
-  if (tflite::InterpreterBuilder(model, resolver)(&interpreter) != kTfLiteOk)
-  {
-    return nullptr;
-  }
-
-//TODO are we sure it's going on the edge tpu unless we do this?
-//TODO  auto* delegate = edgetpu_create_delegate(static_cast<edgetpu_device_type>(edgetpu_context->GetDeviceEnumRecord().type), edgetpu_context->GetDeviceEnumRecord().path.c_str(), nullptr, 0);//TODO delete somewhere?
-//TODO  interpreter->ModifyGraphWithDelegate({ delegate, edgetpu_free_delegate });
-//TODO  interpreter->ModifyGraphWithDelegate(delegate);
-
-  interpreter->SetExternalContext(kTfLiteEdgeTpuContext, edgetpu_context);
-  if (interpreter->SetNumThreads(1) != kTfLiteOk)
-  {
-    return nullptr;
-  }
-  if (interpreter->AllocateTensors() != kTfLiteOk)
-  {
-    return nullptr;
-  }
-  return interpreter;
 }
 
 std::vector<Object> GetDetectionResults(absl::Span<const float> bboxes, absl::Span<const float> ids, absl::Span<const float> scores, size_t count, float threshold, size_t top_k)
@@ -311,7 +290,11 @@ LIB_CORAL_MODULE_API const char* LibCoralGetDevicePath(LIB_CORAL_CONTEXT* contex
 
 LIB_CORAL_MODULE_API LIB_CORAL_DEVICE_CONTAINER* LibCoralOpenDevice(LIB_CORAL_CONTEXT* context, const size_t index)
 {
-//TODO IF IT IS ALREADY OPEN, THEN JUST PASS BACK A POINTER
+  // If the device is already open, then just return that
+  if (context->records_[index].device_)
+  {
+    return new LIB_CORAL_DEVICE_CONTAINER(context->records_[index].device_);
+  }
   // Open device
   std::shared_ptr<edgetpu::EdgeTpuContext> edgetpucontext = edgetpu::EdgeTpuManager::GetSingleton()->OpenDevice((context->records_[index].type_ == LIB_CORAL_DEVICE_TYPE::PCI) ? edgetpu::DeviceType::kApexPci : edgetpu::DeviceType::kApexUsb, LibCoralGetDevicePath(context, index));
   if (edgetpucontext == nullptr)
@@ -319,8 +302,25 @@ LIB_CORAL_MODULE_API LIB_CORAL_DEVICE_CONTAINER* LibCoralOpenDevice(LIB_CORAL_CO
     return nullptr;
   }
   // Build model
-  std::unique_ptr<tflite::Interpreter> interpreter = std::move(BuildEdgeTpuInterpreter(*context->flatbuffermodel_, edgetpucontext.get()));
-  if (interpreter == nullptr)
+  tflite::ops::builtin::BuiltinOpResolver resolver;
+  resolver.AddCustom(edgetpu::kCustomOp, edgetpu::RegisterCustomOp());
+  std::unique_ptr<tflite::Interpreter> interpreter;
+  if (tflite::InterpreterBuilder(*context->flatbuffermodel_, resolver)(&interpreter) != kTfLiteOk)
+  {
+    return nullptr;
+  }
+
+//TODO are we sure it's going on the edge tpu unless we do this?
+//TODO  auto* delegate = edgetpu_create_delegate(static_cast<edgetpu_device_type>(edgetpu_context->GetDeviceEnumRecord().type), edgetpu_context->GetDeviceEnumRecord().path.c_str(), nullptr, 0);//TODO delete somewhere?
+//TODO  interpreter->ModifyGraphWithDelegate({ delegate, edgetpu_free_delegate });
+//TODO  interpreter->ModifyGraphWithDelegate(delegate);
+
+  interpreter->SetExternalContext(kTfLiteEdgeTpuContext, edgetpucontext.get());
+  if (interpreter->SetNumThreads(1) != kTfLiteOk)
+  {
+    return nullptr;
+  }
+  if (interpreter->AllocateTensors() != kTfLiteOk)
   {
     return nullptr;
   }
@@ -344,10 +344,13 @@ LIB_CORAL_MODULE_API LIB_CORAL_DEVICE_CONTAINER* LibCoralOpenDevice(LIB_CORAL_CO
   {
     return nullptr;
   }
-
-  interpreter->AllocateTensors();//TODO
-
-  return new LIB_CORAL_DEVICE_CONTAINER(new LIB_CORAL_DEVICE(edgetpucontext, std::move(interpreter), std::array<int, 3>({ inputdims->data[1], inputdims->data[2], inputdims->data[3] }), std::array<int, 3>({ outputdims->data[1], outputdims->data[2], outputdims->data[3] })));
+  if (interpreter->AllocateTensors() != kTfLiteOk)
+  {
+    return nullptr;
+  }
+  LIB_CORAL_DEVICE* device = new LIB_CORAL_DEVICE(edgetpucontext, std::move(interpreter), std::array<int, 3>({ inputdims->data[1], inputdims->data[2], inputdims->data[3] }), std::array<int, 3>({ outputdims->data[1], outputdims->data[2], outputdims->data[3] }));
+  context->records_[index].device_ = device;
+  return new LIB_CORAL_DEVICE_CONTAINER(device);
 }
 
 LIB_CORAL_MODULE_API void LibCoralCloseDevice(LIB_CORAL_DEVICE_CONTAINER* device)
