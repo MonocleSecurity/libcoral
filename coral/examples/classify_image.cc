@@ -225,7 +225,7 @@ std::vector<Object> GetDetectionResults(absl::Span<const float> bboxes, absl::Sp
     const float xmin = std::max(0.0f, bboxes[4 * i + 1]);
     const float ymax = std::min(1.0f, bboxes[4 * i + 2]);
     const float xmax = std::min(1.0f, bboxes[4 * i + 3]);
-    q.push(Object{id, score, BBox<float>{ymin, xmin, ymax, xmax}});
+    q.push(Object{id, score, BBox<float>{ymin, xmin, ymax, xmax}});//TODO call constructor please
     if (q.size() > top_k) q.pop();
   }
 
@@ -415,7 +415,7 @@ LIB_CORAL_MODULE_API int LibCoralRun(LIB_CORAL_DEVICE* device, const uint8_t* co
   {
     return result.first;
   }
-  device->resultsbuffer_ = result.second;
+  device->resultsbuffer_ = result.second;//TODO probably dont' want this anymore, just return the results immediately I think... but we can't return a vector...
   return 0;
 }
 
