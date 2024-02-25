@@ -25,52 +25,6 @@
 
 ///// Structures /////
 
-struct LIB_CORAL_CONTEXT_RECORD
-{
-  LIB_CORAL_CONTEXT_RECORD(const LIB_CORAL_DEVICE_TYPE type, const std::string& path)
-    : type_(type)
-    , path_(path)
-  {
-  }
-
-  LIB_CORAL_DEVICE_TYPE type_;
-  std::string path_;
-
-};
-
-struct LIB_CORAL_CONTEXT
-{
-  LIB_CORAL_CONTEXT(std::unique_ptr<tflite::FlatBufferModel>&& flatbuffermodel)
-    : flatbuffermodel_(std::move(flatbuffermodel))
-  {
-  }
-
-//TODO do we need a mutex? probably not?
-  std::unique_ptr<tflite::FlatBufferModel> flatbuffermodel_;
-  std::vector<LIB_CORAL_CONTEXT_RECORD> records_;
-
-};
-
-struct LIB_CORAL_DEVICE
-{
-  LIB_CORAL_DEVICE(const std::shared_ptr<edgetpu::EdgeTpuContext>& edgetpucontext, std::unique_ptr<tflite::Interpreter>&& interpreter, const std::array<int, 3>& inputshape, const std::array<int, 3>& outputshape)
-    : edgetpucontext_(edgetpucontext)
-    , interpreter_(std::move(interpreter))
-    , inputshape_(inputshape)
-    , outputshape_(outputshape)
-  {
-  }
-
-  mutable std::mutex mutex_;
-  std::shared_ptr<edgetpu::EdgeTpuContext> edgetpucontext_;
-  std::unique_ptr<tflite::Interpreter> interpreter_;
-  std::array<int, 3> inputshape_;
-  std::array<int, 3> outputshape_;
-//TODO perhaps a std::map<LIB_CORAL_DEVICE_OUTPUT*, LIB_CORAL_DEVICE_OUTPUT_DATA>?
-//TODO then a user can use their LIB_CORAL_DEVICE to get a pointer to the output data somehow?
-
-};
-
 struct BBox
 {
 //TODO constructor
@@ -99,6 +53,62 @@ struct ObjectComparator
   {
     return std::tie(lhs.score, lhs.id) > std::tie(rhs.score, rhs.id);
   }
+};
+
+struct LIB_CORAL_CONTEXT_RECORD
+{
+  LIB_CORAL_CONTEXT_RECORD(const LIB_CORAL_DEVICE_TYPE type, const std::string& path)
+    : type_(type)
+    , path_(path)
+  {
+  }
+
+  const LIB_CORAL_DEVICE_TYPE type_;
+  const std::string path_;
+
+};
+
+struct LIB_CORAL_CONTEXT
+{
+  LIB_CORAL_CONTEXT(std::unique_ptr<tflite::FlatBufferModel>&& flatbuffermodel, const std::vector<LIB_CORAL_CONTEXT_RECORD>& records)
+    : flatbuffermodel_(std::move(flatbuffermodel))
+    , records_(records)
+  {
+  }
+
+  const std::unique_ptr<tflite::FlatBufferModel> flatbuffermodel_;
+  const std::vector<LIB_CORAL_CONTEXT_RECORD> records_;
+
+};
+
+struct LIB_CORAL_DEVICE
+{
+  LIB_CORAL_DEVICE(const std::shared_ptr<edgetpu::EdgeTpuContext>& edgetpucontext, std::unique_ptr<tflite::Interpreter>&& interpreter, const std::array<int, 3>& inputshape, const std::array<int, 3>& outputshape)
+    : edgetpucontext_(edgetpucontext)
+    , interpreter_(std::move(interpreter))
+    , inputshape_(inputshape)
+    , outputshape_(outputshape)
+  {
+  }
+
+  mutable std::mutex mutex_;
+  std::shared_ptr<edgetpu::EdgeTpuContext> edgetpucontext_;
+  std::unique_ptr<tflite::Interpreter> interpreter_;
+  std::array<int, 3> inputshape_;
+  std::array<int, 3> outputshape_;
+
+};
+
+struct LIB_CORAL_DEVICE_CONTAINER
+{
+  LIB_CORAL_DEVICE_CONTAINER(LIB_CORAL_DEVICE* device)
+    : device_(device)
+  {
+  }
+
+  LIB_CORAL_DEVICE* device_;
+  std::vector<Object> results_;
+
 };
 
 ///// Functions /////
@@ -193,7 +203,10 @@ std::vector<Object> GetDetectionResults(absl::Span<const float> bboxes, absl::Sp
   {
     const int id = std::round(ids[i]);
     const float score = scores[i];
-    if (score < threshold) continue;
+    if (score < threshold)
+    {
+      continue;
+    }
     const float ymin = std::max(0.0f, bboxes[4 * i]);
     const float xmin = std::max(0.0f, bboxes[4 * i + 1]);
     const float ymax = std::min(1.0f, bboxes[4 * i + 2]);
@@ -258,19 +271,19 @@ LIB_CORAL_MODULE_API LIB_CORAL_CONTEXT* LibCoralInit(const char* model)
   }
   // Enumerate devices
   const std::vector<edgetpu::EdgeTpuManager::DeviceEnumerationRecord> records = edgetpu::EdgeTpuManager::GetSingleton()->EnumerateEdgeTpu();
-  LIB_CORAL_CONTEXT* coralcontext = new LIB_CORAL_CONTEXT(std::move(flatbuffermodel));
+  std::vector<LIB_CORAL_CONTEXT_RECORD> result;
   for (const edgetpu::EdgeTpuManager::DeviceEnumerationRecord& record : records)
   {
     if (record.type == edgetpu::DeviceType::kApexUsb)
     {
-      coralcontext->records_.push_back(LIB_CORAL_CONTEXT_RECORD(LIB_CORAL_DEVICE_TYPE::USB, record.path));
+      result.push_back(LIB_CORAL_CONTEXT_RECORD(LIB_CORAL_DEVICE_TYPE::USB, record.path));
     }
     else if (record.type == edgetpu::DeviceType::kApexPci)
     {
-      coralcontext->records_.push_back(LIB_CORAL_CONTEXT_RECORD(LIB_CORAL_DEVICE_TYPE::PCI, record.path));
+      result.push_back(LIB_CORAL_CONTEXT_RECORD(LIB_CORAL_DEVICE_TYPE::PCI, record.path));
     }
   }
-  return coralcontext;
+  return new LIB_CORAL_CONTEXT(std::move(flatbuffermodel), result);
 }
 
 LIB_CORAL_MODULE_API void LibCoralDestroy(LIB_CORAL_CONTEXT* context)
@@ -296,8 +309,9 @@ LIB_CORAL_MODULE_API const char* LibCoralGetDevicePath(LIB_CORAL_CONTEXT* contex
   return context->records_[index].path_.c_str();
 }
 
-LIB_CORAL_MODULE_API LIB_CORAL_DEVICE* LibCoralOpenDevice(LIB_CORAL_CONTEXT* context, const size_t index)
+LIB_CORAL_MODULE_API LIB_CORAL_DEVICE_CONTAINER* LibCoralOpenDevice(LIB_CORAL_CONTEXT* context, const size_t index)
 {
+//TODO IF IT IS ALREADY OPEN, THEN JUST PASS BACK A POINTER
   // Open device
   std::shared_ptr<edgetpu::EdgeTpuContext> edgetpucontext = edgetpu::EdgeTpuManager::GetSingleton()->OpenDevice((context->records_[index].type_ == LIB_CORAL_DEVICE_TYPE::PCI) ? edgetpu::DeviceType::kApexPci : edgetpu::DeviceType::kApexUsb, LibCoralGetDevicePath(context, index));
   if (edgetpucontext == nullptr)
@@ -333,38 +347,39 @@ LIB_CORAL_MODULE_API LIB_CORAL_DEVICE* LibCoralOpenDevice(LIB_CORAL_CONTEXT* con
 
   interpreter->AllocateTensors();//TODO
 
-  return new LIB_CORAL_DEVICE(edgetpucontext, std::move(interpreter), std::array<int, 3>({ inputdims->data[1], inputdims->data[2], inputdims->data[3] }), std::array<int, 3>({ outputdims->data[1], outputdims->data[2], outputdims->data[3] }));
+  return new LIB_CORAL_DEVICE_CONTAINER(new LIB_CORAL_DEVICE(edgetpucontext, std::move(interpreter), std::array<int, 3>({ inputdims->data[1], inputdims->data[2], inputdims->data[3] }), std::array<int, 3>({ outputdims->data[1], outputdims->data[2], outputdims->data[3] })));
 }
 
-LIB_CORAL_MODULE_API void LibCoralCloseDevice(LIB_CORAL_DEVICE* device)
+LIB_CORAL_MODULE_API void LibCoralCloseDevice(LIB_CORAL_DEVICE_CONTAINER* device)
 {
-  device->interpreter_.reset();
-  device->edgetpucontext_.reset();
+  device->device_->interpreter_.reset();
+  device->device_->edgetpucontext_.reset();
 }
 
-LIB_CORAL_MODULE_API const int* const LibCoralGetInputShape(LIB_CORAL_DEVICE* device)
+LIB_CORAL_MODULE_API const int* const LibCoralGetInputShape(LIB_CORAL_DEVICE_CONTAINER* device)
 {
-  return device->inputshape_.data();
+  return device->device_->inputshape_.data();
 }
 
-LIB_CORAL_MODULE_API const int* const LibCoralGetOutputShape(LIB_CORAL_DEVICE* device)
+LIB_CORAL_MODULE_API const int* const LibCoralGetOutputShape(LIB_CORAL_DEVICE_CONTAINER* device)
 {
-  return device->outputshape_.data();
+  return device->device_->outputshape_.data();
 }
 
-LIB_CORAL_MODULE_API int LibCoralRun(LIB_CORAL_DEVICE* device, const uint8_t* const data, const size_t size)
+LIB_CORAL_MODULE_API int LibCoralRun(LIB_CORAL_DEVICE_CONTAINER* device, const uint8_t* const data, const size_t size)
 {
-  std::lock_guard<std::mutex> lock(device->mutex_);
-  uint8_t* input = device->interpreter_->typed_input_tensor<uint8_t>(0);
+  std::lock_guard<std::mutex> lock(device->device_->mutex_);
+  uint8_t* input = device->device_->interpreter_->typed_input_tensor<uint8_t>(0);
   std::memcpy(input, data, size);
-  const TfLiteStatus status = device->interpreter_->Invoke();
+  const TfLiteStatus status = device->device_->interpreter_->Invoke();
   if (status != TfLiteStatus::kTfLiteOk)
   {
     return 1;
   }
   // Collect results
 //TODO I think we collect all things and package it in a way that can be ready nicely
-  const std::vector<Object> objects = GetDetectionResults(*device->interpreter_);
+  const std::vector<Object> objects = GetDetectionResults(*device->device_->interpreter_);
+  device->results_.clear();
   for (auto o : objects)
   {
     if (o.id == 0 || o.id == 1)
@@ -374,20 +389,22 @@ LIB_CORAL_MODULE_API int LibCoralRun(LIB_CORAL_DEVICE* device, const uint8_t* co
         std::cout << o.id << " " << o.score << " " << o.bbox.xmin << " " << o.bbox.ymin << std::endl;//TODO
       }
     }
+    device->results_.push_back(o);
   }
   return 0;
 }
 
-LIB_CORAL_MODULE_API const float* const LibCoralGetResults(LIB_CORAL_DEVICE* device)//TODO changes now... returns Object* I think?
+//TODO get id, get score, get bbox(4 floats next to eachother in pointer form)
+
+LIB_CORAL_MODULE_API const float* const LibCoralGetResults(LIB_CORAL_DEVICE_CONTAINER* device)//TODO changes now... returns Object* I think?
 {
   return nullptr;//TODO
 //TODO  return device->resultsbuffer_.data();
 }
 
-LIB_CORAL_MODULE_API size_t LibCoralGetResultsSize(LIB_CORAL_DEVICE* device)//TODO returns number of objects I think?
+LIB_CORAL_MODULE_API size_t LibCoralGetResultsSize(LIB_CORAL_DEVICE_CONTAINER* device)
 {
-  return 0;//TODO
-//TODO  return device->resultsbuffer_.size();
+  return device->results_.size();
 }
 
 }

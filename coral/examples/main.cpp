@@ -245,7 +245,7 @@ std::cout << "D" << std::endl;//TODO
   }
   // Open device
   std::cout << "Opening device" << std::endl;
-  LIB_CORAL_DEVICE* device = opendevice(coralcontext, 0);
+  LIB_CORAL_DEVICE_CONTAINER* device = opendevice(coralcontext, 0);
   if (device == nullptr)
   {
     std::cout << "Failed to open coral device" << std::endl;
