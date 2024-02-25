@@ -87,98 +87,6 @@ absl::Span<const T> TensorData(const TfLiteTensor& tensor) {
                         tensor.bytes / sizeof(T));
 }
 
-// Gets the mutable data from the given tensor.
-template <typename T>
-absl::Span<T> MutableTensorData(const TfLiteTensor& tensor) {
-  return absl::MakeSpan(reinterpret_cast<T*>(tensor.data.data),
-                        tensor.bytes / sizeof(T));
-}
-
-int TensorSize(const TfLiteTensor& tensor)
-{
-  auto shape = TensorShape(tensor);
-  return std::accumulate(shape.begin(), shape.end(), 1, std::multiplies<int>());
-}
-
-template <typename InputIt, typename OutputIt>
-OutputIt Dequantize(InputIt first, InputIt last, OutputIt d_first, float scale,
-                    int32_t zero_point) {
-  while (first != last) *d_first++ = scale * (*first++ - zero_point);
-  return d_first;
-}
-
-// Returns a dequantized version of the given vector span.
-template <typename T, typename OutputIt>
-OutputIt Dequantize(absl::Span<const T> span, OutputIt d_first, float scale,
-                    int32_t zero_point) {
-  return Dequantize(span.begin(), span.end(), d_first, scale, zero_point);
-}
-
-template <typename T>
-std::vector<T> DequantizeTensor(const TfLiteTensor& tensor) {
-  const auto scale = tensor.params.scale;
-  const auto zero_point = tensor.params.zero_point;
-  std::vector<T> result(TensorSize(tensor));
-
-  if (tensor.type == kTfLiteUInt8)
-    Dequantize(TensorData<uint8_t>(tensor), result.begin(), scale, zero_point);
-  else if (tensor.type == kTfLiteInt8)
-    Dequantize(TensorData<int8_t>(tensor), result.begin(), scale, zero_point);
-  else
-    LOG(FATAL) << "Unsupported tensor type: " << tensor.type;
-
-  return result;
-}
-
-struct Class {
-  // The class label id.
-  int id;
-  // The prediction score.
-  float score;
-};
-
-struct ClassComparator {
-  bool operator()(const Class& lhs, const Class& rhs) const {
-    return std::tie(lhs.score, lhs.id) > std::tie(rhs.score, rhs.id);
-  }
-};
-
-std::string ToString(const Class& c) {
-  return absl::Substitute("Class(id=$0,score=$1)", c.id, c.score);
-}
-
-std::vector<Class> GetClassificationResults(absl::Span<const float> scores,
-                                            float threshold, size_t top_k) {
-  std::priority_queue<Class, std::vector<Class>, ClassComparator> q;
-  for (int i = 0; i < scores.size(); ++i) {
-    if (scores[i] < threshold) continue;
-    q.push(Class{i, scores[i]});
-    if (q.size() > top_k) q.pop();
-  }
-
-  std::vector<Class> ret;
-  while (!q.empty()) {
-    ret.push_back(q.top());
-    q.pop();
-  }
-  std::reverse(ret.begin(), ret.end());
-  return ret;
-}
-
-std::vector<Class> GetClassificationResults(
-    const tflite::Interpreter& interpreter, float threshold, size_t top_k) {
-  const auto& tensor = *interpreter.output_tensor(0);
-  if (tensor.type == kTfLiteUInt8 || tensor.type == kTfLiteInt8) {
-    return GetClassificationResults(DequantizeTensor<float>(tensor), threshold,
-                                    top_k);
-  } else if (tensor.type == kTfLiteFloat32) {
-    return GetClassificationResults(TensorData<float>(tensor), threshold,
-                                    top_k);
-  } else {
-    LOG(FATAL) << "Unsupported tensor type: " << tensor.type;
-  }
-}
-
 TfLiteFloatArray* TfLiteFloatArrayCopy(const TfLiteFloatArray* src) {
   if (!src) return nullptr;
 
@@ -250,14 +158,6 @@ std::unique_ptr<tflite::Interpreter> BuildEdgeTpuInterpreter(const tflite::FlatB
     std::cerr << "Failed to allocate tensors." << std::endl;
   }
   return interpreter;
-}
-
-int CheckInputSize(const TfLiteTensor& tensor, size_t size)
-{
-  const size_t tensor_size = TensorSize(tensor);
-  if (size < tensor_size)
-    return 1;
-  return 0;
 }
 
 template <typename T>
@@ -358,19 +258,19 @@ struct Object {
   BBox<float> bbox;
 };
 
-struct ObjectComparator {
-  bool operator()(const Object& lhs, const Object& rhs) const {
+struct ObjectComparator
+{
+  bool operator()(const Object& lhs, const Object& rhs) const
+  {
     return std::tie(lhs.score, lhs.id) > std::tie(rhs.score, rhs.id);
   }
 };
 
-std::vector<Object> GetDetectionResults(absl::Span<const float> bboxes,
-                                        absl::Span<const float> ids,
-                                        absl::Span<const float> scores,
-                                        size_t count, float threshold,
-                                        size_t top_k) {
+std::vector<Object> GetDetectionResults(absl::Span<const float> bboxes, absl::Span<const float> ids, absl::Span<const float> scores, size_t count, float threshold, size_t top_k)
+{
   std::priority_queue<Object, std::vector<Object>, ObjectComparator> q;
-  for (int i = 0; i < count; ++i) {
+  for (int i = 0; i < count; ++i)
+  {
     const int id = std::round(ids[i]);
     const float score = scores[i];
     if (score < threshold) continue;
@@ -384,7 +284,8 @@ std::vector<Object> GetDetectionResults(absl::Span<const float> bboxes,
 
   std::vector<Object> ret;
   ret.reserve(q.size());
-  while (!q.empty()) {
+  while (!q.empty())
+  {
     ret.push_back(q.top());
     q.pop();
   }
@@ -392,16 +293,14 @@ std::vector<Object> GetDetectionResults(absl::Span<const float> bboxes,
   return ret;
 }
 
-std::vector<Object> GetDetectionResults(
-    const tflite::Interpreter& interpreter,
-    float threshold = -std::numeric_limits<float>::infinity(),
-    size_t top_k = std::numeric_limits<size_t>::max())
+std::vector<Object> GetDetectionResults(const tflite::Interpreter& interpreter, float threshold = -std::numeric_limits<float>::infinity(), size_t top_k = std::numeric_limits<size_t>::max())
 {
   absl::Span<const float> bboxes, ids, scores, count;
   // If a model has signature, we use the signature output tensor names to parse
   // the results. Otherwise, we parse the results based on some assumption of
   // the output tensor order and size.
-  if (!interpreter.signature_def_names().empty()) {
+  if (!interpreter.signature_def_names().empty())
+  {
     CHECK_EQ(interpreter.signature_def_names().size(), 1);
     VLOG(1) << "Signature name: " << *interpreter.signature_def_names()[0];
     const auto& signature_output_map = interpreter.signature_outputs(
@@ -415,99 +314,49 @@ std::vector<Object> GetDetectionResults(
         *interpreter.tensor(signature_output_map.at("output_2")));
     bboxes = TensorData<float>(
         *interpreter.tensor(signature_output_map.at("output_3")));
-  } else if (interpreter.output_tensor(3)->bytes / sizeof(float) == 1) {
+  }
+  else if (interpreter.output_tensor(3)->bytes / sizeof(float) == 1)
+  {
     bboxes = TensorData<float>(*interpreter.output_tensor(0));
     ids = TensorData<float>(*interpreter.output_tensor(1));
     scores = TensorData<float>(*interpreter.output_tensor(2));
     count = TensorData<float>(*interpreter.output_tensor(3));
-  } else {
+  }
+  else
+  {
     scores = TensorData<float>(*interpreter.output_tensor(0));
     bboxes = TensorData<float>(*interpreter.output_tensor(1));
     count = TensorData<float>(*interpreter.output_tensor(2));
     ids = TensorData<float>(*interpreter.output_tensor(3));
   }
-  CHECK_EQ(bboxes.size(), 4 * ids.size());
-  CHECK_EQ(bboxes.size(), 4 * scores.size());
-  CHECK_EQ(count.size(), 1);
   return GetDetectionResults(bboxes, ids, scores, static_cast<size_t>(count[0]), threshold, top_k);
 }
 
 
 std::pair<int, std::vector<float>> RunInference(const std::vector<uint8_t>& input_data, tflite::Interpreter* interpreter)//TODO tidy up
 {
-//TODO  std::cout << "running " << input_data.size() << " " << interpreter->inputs().size() << " " << interpreter->tensor(interpreter->inputs()[0])->dims->data[0] << " " << interpreter->tensor(interpreter->inputs()[0])->dims->data[1] << " " << interpreter->tensor(interpreter->inputs()[0])->dims->data[2] << " " << interpreter->tensor(interpreter->inputs()[0])->dims->data[3] << std::endl;//TODO
-
-//TODO  const int input_tensor_index = interpreter->inputs()[0];
-//TODO  TfLiteTensor* input_tensor = interpreter->tensor(input_tensor_index);
-
-//TODO  int sizey = TensorSize(*input_tensor);
-//TODO  int* buffer = new int[sizey * 100];
-
-//TODO  std::cout << "SET TENSOR BUFFER " << sizey << " " << SetTensorBuffer(interpreter, input_tensor_index, buffer, input_tensor->bytes) << std::endl;//TODO
-
-
+//TODO can do better, I think we give the input* to the main app to copy into
   std::vector<float> output_data;
   uint8_t* input = interpreter->typed_input_tensor<uint8_t>(0);
   std::memcpy(input, input_data.data(), input_data.size());
 
-//  std::cout << "invoking " << interpreter << " " << input_data.size() << std::endl;//TODO
-
   const TfLiteStatus status = interpreter->Invoke();
   if (status != TfLiteStatus::kTfLiteOk)
   {
-  std::cout << "failinvoke " << interpreter << " " << input_data.size() << std::endl;//TODO
-
+    return std::make_pair(1, std::vector<float>());
   }
-
-//TODO is this correct? no, we want object detector results, not this shit
-/*  for (auto result : coral::GetClassificationResults(*interpreter, 0.0f, top_k=3)) {
-    std::cout << "---------------------------" << std::endl;
-    std::cout << "Score: " << result.score << std::endl;
-  }*/
-
-
-
-  //TODO parse output
-  const auto& output_indices = interpreter->outputs();
-  const int num_outputs = output_indices.size();
-  int out_idx = 0;
-//TODO  for (int i = 0; i < num_outputs; ++i)
+  // Collect results
+  const std::vector<Object> objects = GetDetectionResults(*interpreter);
+  for (auto o : objects)
   {
-//TODO    const auto* out_tensor = interpreter->tensor(output_indices[i]);
-
-    const std::vector<Object> objects = GetDetectionResults(*interpreter);
-
-//    std::cout << objects.size() << std::endl;//TODO
-    for (auto o : objects)
+    if (o.id == 0 || o.id == 1)
     {
-      if (o.id == 0 || o.id == 1)
+      if (o.score > 0.7)
       {
-        if (o.score > 0.7)
-	{
-          std::cout << o.id << " " << o.score << std::endl;//TODO
-	}  
+        std::cout << o.id << " " << o.score << " " << o.bbox.xmin << " " << o.bbox.ymin << std::endl;//TODO
       }
     }
-
-
-
-
-//TODO
-/*const std::vector<int>& results = interpreter->outputs();
-TfLiteTensor* outputLocations = interpreter->tensor(results[0]);
-TfLiteTensor* outputClasses   = interpreter->tensor(results[1]);
-float *data = tflite::GetTensorData<float>(outputClasses);
-for(int i=0;i<NUM_RESULTS;i++)
-{
-   for(int j=1;j<NUM_CLASSES;j++)
-   {
-      auto expit = [](float x) {return 1.f/(1.f + std::exp(-x));};
-      float score = expit(data[i*NUM_CLASSES+j]); // ¿? This does not seem to be correct.
-    }
-}*/
-
   }
-//  std::cout << "finished " << interpreter << " " << input_data.size() << " " << output_data.size() << std::endl;//TODO
   return std::make_pair(0, output_data);
 }
 
