@@ -43,7 +43,9 @@ typedef void(*LIB_CORAL_CLOSE_DEVICE)(LIB_CORAL_DEVICE_CONTAINER*);
 typedef const int* const(*LIB_CORAL_GET_INPUT_SHAPE)(LIB_CORAL_DEVICE_CONTAINER*); // returns an array of 3 integers
 typedef const int* const(*LIB_CORAL_GET_OUTPUT_SHAPE)(LIB_CORAL_DEVICE_CONTAINER*); // returns an array of 3 integers
 typedef int(*LIB_CORAL_RUN)(LIB_CORAL_DEVICE_CONTAINER*, const uint8_t* const, const size_t);
-typedef const float* const(*LIB_CORAL_GET_RESULTS)(LIB_CORAL_DEVICE_CONTAINER*);
+typedef int(*LIB_CORAL_GET_RESULT_ID)(LIB_CORAL_DEVICE_CONTAINER*, const size_t index);
+typedef float(*LIB_CORAL_GET_RESULT_SCORE)(LIB_CORAL_DEVICE_CONTAINER*, const size_t index);
+typedef const float* const(*LIB_CORAL_GET_RESULT_BOUNDING_BOX)(LIB_CORAL_DEVICE_CONTAINER*, const size_t index); // Returns an array of 4 floats, ymin, xmin, ymax, xmax
 typedef size_t(*LIB_CORAL_GET_RESULTS_SIZE)(LIB_CORAL_DEVICE_CONTAINER*);
 
 ///// Prototypes /////
@@ -62,6 +64,8 @@ LIB_CORAL_MODULE_API void LibCoralCloseDevice(LIB_CORAL_DEVICE_CONTAINER* device
 LIB_CORAL_MODULE_API const int* const LibCoralGetInputShape(LIB_CORAL_DEVICE_CONTAINER* device);
 LIB_CORAL_MODULE_API const int* const LibCoralGetOutputShape(LIB_CORAL_DEVICE_CONTAINER* device);
 LIB_CORAL_MODULE_API int LibCoralRun(LIB_CORAL_DEVICE_CONTAINER* device, const uint8_t* const data, const size_t size);
-LIB_CORAL_MODULE_API const float* const LibCoralGetResults(LIB_CORAL_DEVICE_CONTAINER* device);
+LIB_CORAL_MODULE_API int LibCoralGetResultId(LIB_CORAL_DEVICE_CONTAINER* device, const size_t index);
+LIB_CORAL_MODULE_API float LibCoralGetResultScore(LIB_CORAL_DEVICE_CONTAINER* device, const size_t index);
+LIB_CORAL_MODULE_API const float* const LibCoralGetResultBoundingBox(LIB_CORAL_DEVICE_CONTAINER* device, const size_t index);
 LIB_CORAL_MODULE_API size_t LibCoralGetResultsSize(LIB_CORAL_DEVICE_CONTAINER* device);
 }

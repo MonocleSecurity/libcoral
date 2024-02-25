@@ -29,7 +29,7 @@ struct LIB_CORAL_DEVICE;
 
 ///// Structures /////
 
-struct BBox
+struct BBox//TODO convert to std::array<float, 4>
 {
 //TODO constructor
 
@@ -383,7 +383,7 @@ LIB_CORAL_MODULE_API int LibCoralRun(LIB_CORAL_DEVICE_CONTAINER* device, const u
 //TODO I think we collect all things and package it in a way that can be ready nicely
   const std::vector<Object> objects = GetDetectionResults(*device->device_->interpreter_);
   device->results_.clear();
-  for (auto o : objects)
+  for (auto o : objects)//TODO remove
   {
     if (o.id == 0 || o.id == 1)
     {
@@ -399,7 +399,17 @@ LIB_CORAL_MODULE_API int LibCoralRun(LIB_CORAL_DEVICE_CONTAINER* device, const u
 
 //TODO get id, get score, get bbox(4 floats next to eachother in pointer form)
 
-LIB_CORAL_MODULE_API const float* const LibCoralGetResults(LIB_CORAL_DEVICE_CONTAINER* device)//TODO changes now... returns Object* I think?
+LIB_CORAL_MODULE_API int LibCoralGetResultId(LIB_CORAL_DEVICE_CONTAINER* device, const size_t index)
+{
+  return device->results_[index].id;
+}
+
+LIB_CORAL_MODULE_API float LibCoralGetResultScore(LIB_CORAL_DEVICE_CONTAINER* device, const size_t index)
+{
+  return 0.0f;//TODO
+}
+
+LIB_CORAL_MODULE_API const float* const LibCoralGetResultBoundingBox(LIB_CORAL_DEVICE_CONTAINER* device, const size_t index)
 {
   return nullptr;//TODO
 //TODO  return device->resultsbuffer_.data();

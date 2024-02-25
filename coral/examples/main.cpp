@@ -192,7 +192,9 @@ std::cout << "D" << std::endl;//TODO
   const LIB_CORAL_GET_INPUT_SHAPE getinputshape = reinterpret_cast<LIB_CORAL_GET_INPUT_SHAPE>(GetProcAddress(module, "LibCoralGetInputShape"));
   const LIB_CORAL_GET_OUTPUT_SHAPE getoutputshape = reinterpret_cast<LIB_CORAL_GET_OUTPUT_SHAPE>(GetProcAddress(module, "LibCoralGetOutputShape"));
   const LIB_CORAL_RUN run = reinterpret_cast<LIB_CORAL_RUN>(GetProcAddress(module, "LibCoralRun"));
-  const LIB_CORAL_GET_RESULTS getresults = reinterpret_cast<LIB_CORAL_GET_RESULTS>(GetProcAddress(module, "LibCoralGetResults"));
+  const LIB_CORAL_GET_RESULT_ID getresultid = reinterpret_cast<LIB_CORAL_GET_RESULT_ID>(GetProcAddress(module, "LibCoralGetResultId"));
+  const LIB_CORAL_GET_RESULT_SCORE getresultscore = reinterpret_cast<LIB_CORAL_GET_RESULT_SCORE>(GetProcAddress(module, "LibCoralGetResultScore"));
+  const LIB_CORAL_GET_RESULT_BOUNDING_BOX getresultboundingbox = reinterpret_cast<LIB_CORAL_GET_RESULT_BOUNDING_BOX>(GetProcAddress(module, "LibCoralGetResultBoundingBox"));
   const LIB_CORAL_GET_RESULTS_SIZE getresultssize = reinterpret_cast<LIB_CORAL_GET_RESULTS_SIZE>(GetProcAddress(module, "LibCoralGetResultsSize"));
 #else
   const LIB_CORAL_INIT init = reinterpret_cast<LIB_CORAL_INIT>(dlsym(module, "LibCoralInit"));
@@ -205,10 +207,12 @@ std::cout << "D" << std::endl;//TODO
   const LIB_CORAL_GET_INPUT_SHAPE getinputshape = reinterpret_cast<LIB_CORAL_GET_INPUT_SHAPE>(dlsym(module, "LibCoralGetInputShape"));
   const LIB_CORAL_GET_OUTPUT_SHAPE getoutputshape = reinterpret_cast<LIB_CORAL_GET_OUTPUT_SHAPE>(dlsym(module, "LibCoralGetOutputShape"));
   const LIB_CORAL_RUN run = reinterpret_cast<LIB_CORAL_RUN>(dlsym(module, "LibCoralRun"));
-  const LIB_CORAL_GET_RESULTS getresults = reinterpret_cast<LIB_CORAL_GET_RESULTS>(dlsym(module, "LibCoralGetResults"));
+  const LIB_CORAL_GET_RESULT_ID getresultid = reinterpret_cast<LIB_CORAL_GET_RESULT_ID>(dlsym(module, "LibCoralGetResultId"));
+  const LIB_CORAL_GET_RESULT_SCORE getresultscore = reinterpret_cast<LIB_CORAL_GET_RESULT_SCORE>(dlsym(module, "LibCoralGetResultScore"));
+  const LIB_CORAL_GET_RESULT_BOUNDING_BOX getresultboundingbox = reinterpret_cast<LIB_CORAL_GET_RESULT_BOUNDING_BOX>(dlsym(module, "LibCoralGetResultBoundingBox"));
   const LIB_CORAL_GET_RESULTS_SIZE getresultssize = reinterpret_cast<LIB_CORAL_GET_RESULTS_SIZE>(dlsym(module, "LibCoralGetResultsSize"));
 #endif
-  if ((init == nullptr) || (destroy == nullptr) || (getnumdevices == nullptr) || (getdevicetype == nullptr) || (getdevicepath == nullptr) || (opendevice == nullptr) || (closedevice == nullptr) || (getinputshape == nullptr) || (getoutputshape == nullptr) || (run == nullptr) || (getresults == nullptr) || (getresultssize == nullptr))
+  if ((init == nullptr) || (destroy == nullptr) || (getnumdevices == nullptr) || (getdevicetype == nullptr) || (getdevicepath == nullptr) || (opendevice == nullptr) || (closedevice == nullptr) || (getinputshape == nullptr) || (getoutputshape == nullptr) || (run == nullptr) || (getresultid == nullptr) || (getresultscore == nullptr) || (getresultboundingbox == nullptr) || (getresultssize == nullptr))
   {
     std::cout << "Failed to load library functions" << std::endl;
     return 2;
@@ -288,7 +292,7 @@ std::cout << "D" << std::endl;//TODO
     std::cout << "Failed to run inference" << std::endl;
     return 9;
   }
-  const float* const results = getresults(device);//TODO this size can be different every time...
+//TODO  const float* const results = getresults(device);//TODO this size can be different every time...
   
   
   
@@ -302,11 +306,11 @@ std::cout << "D" << std::endl;//TODO
   const size_t resultssize = getresultssize(device);
   for (size_t i = 0; i < resultssize; ++i)//TODO this size
   {
-    if (results[i] != 0)
+//TODO    if (results[i] != 0)
     {
-      std::cout << "------\n";
+//TODO      std::cout << "------\n";
 //TODO      std::cout << "Class: " << label.at(i) << "\nScore: " << results[i] << "\n";
-      std::cout << "Class: " << i << "\nScore: " << results[i] << "\n";
+//TODO      std::cout << "Class: " << i << "\nScore: " << results[i] << "\n";
     }
   }
 
