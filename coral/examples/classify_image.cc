@@ -24,6 +24,7 @@
 ///// Declarations /////
 
 struct LIB_CORAL_DEVICE;
+struct LIB_CORAL_DEVICE_CONTAINER;
 
 ///// Structures /////
 
@@ -88,10 +89,11 @@ struct LIB_CORAL_DEVICE
   }
 
   mutable std::mutex mutex_;
-  std::shared_ptr<edgetpu::EdgeTpuContext> edgetpucontext_;
-  std::unique_ptr<tflite::Interpreter> interpreter_;
-  std::array<int, 3> inputshape_;
-  std::array<int, 3> outputshape_;
+  const std::shared_ptr<edgetpu::EdgeTpuContext> edgetpucontext_;
+  const std::unique_ptr<tflite::Interpreter> interpreter_;
+  const std::array<int, 3> inputshape_;
+  const std::array<int, 3> outputshape_;
+  std::vector<LIB_CORAL_DEVICE_CONTAINER*> containers_;
 
 };
 
@@ -290,7 +292,9 @@ LIB_CORAL_MODULE_API LIB_CORAL_DEVICE_CONTAINER* LibCoralOpenDevice(LIB_CORAL_CO
   // If the device is already open, then just return that
   if (context->records_[index].device_)
   {
-    return new LIB_CORAL_DEVICE_CONTAINER(context->records_[index].device_);
+    LIB_CORAL_DEVICE_CONTAINER* container = new LIB_CORAL_DEVICE_CONTAINER(context->records_[index].device_);
+    context->records_[index].device_->containers_.push_back(container);
+    return container;
   }
   // Open device
   std::shared_ptr<edgetpu::EdgeTpuContext> edgetpucontext = edgetpu::EdgeTpuManager::GetSingleton()->OpenDevice((context->records_[index].type_ == LIB_CORAL_DEVICE_TYPE::PCI) ? edgetpu::DeviceType::kApexPci : edgetpu::DeviceType::kApexUsb, LibCoralGetDevicePath(context, index));
@@ -308,6 +312,7 @@ LIB_CORAL_MODULE_API LIB_CORAL_DEVICE_CONTAINER* LibCoralOpenDevice(LIB_CORAL_CO
   }
 
 //TODO are we sure it's going on the edge tpu unless we do this?
+//TODO doesn't look like we need it?
 //TODO  auto* delegate = edgetpu_create_delegate(static_cast<edgetpu_device_type>(edgetpu_context->GetDeviceEnumRecord().type), edgetpu_context->GetDeviceEnumRecord().path.c_str(), nullptr, 0);//TODO delete somewhere?
 //TODO  interpreter->ModifyGraphWithDelegate({ delegate, edgetpu_free_delegate });
 //TODO  interpreter->ModifyGraphWithDelegate(delegate);
@@ -345,59 +350,67 @@ LIB_CORAL_MODULE_API LIB_CORAL_DEVICE_CONTAINER* LibCoralOpenDevice(LIB_CORAL_CO
   {
     return nullptr;
   }
+  // Piece it together
   LIB_CORAL_DEVICE* device = new LIB_CORAL_DEVICE(edgetpucontext, std::move(interpreter), std::array<int, 3>({ inputdims->data[1], inputdims->data[2], inputdims->data[3] }), std::array<int, 3>({ outputdims->data[1], outputdims->data[2], outputdims->data[3] }));
   context->records_[index].device_ = device;
-  return new LIB_CORAL_DEVICE_CONTAINER(device);
+  LIB_CORAL_DEVICE_CONTAINER* container = new LIB_CORAL_DEVICE_CONTAINER(device);
+  context->records_[index].device_->containers_.push_back(container);
+  return container;
 }
 
-LIB_CORAL_MODULE_API void LibCoralCloseDevice(LIB_CORAL_DEVICE_CONTAINER* device)
+LIB_CORAL_MODULE_API void LibCoralCloseDevice(LIB_CORAL_DEVICE_CONTAINER* container)
 {
-  delete device;
+  container->device_->containers_.erase(container->device_->containers_.begin(), std::remove(container->device_->containers_.begin(), container->device_->containers_.end(), container));
+  if (container->device_->containers_.empty())
+  {
+    delete container->device_;
+  }
+  delete container;
 }
 
-LIB_CORAL_MODULE_API const int* const LibCoralGetInputShape(LIB_CORAL_DEVICE_CONTAINER* device)
+LIB_CORAL_MODULE_API const int* const LibCoralGetInputShape(LIB_CORAL_DEVICE_CONTAINER* container)
 {
-  return device->device_->inputshape_.data();
+  return container->device_->inputshape_.data();
 }
 
-LIB_CORAL_MODULE_API const int* const LibCoralGetOutputShape(LIB_CORAL_DEVICE_CONTAINER* device)
+LIB_CORAL_MODULE_API const int* const LibCoralGetOutputShape(LIB_CORAL_DEVICE_CONTAINER* container)
 {
-  return device->device_->outputshape_.data();
+  return container->device_->outputshape_.data();
 }
 
-LIB_CORAL_MODULE_API int LibCoralRun(LIB_CORAL_DEVICE_CONTAINER* device, const uint8_t* const data, const size_t size)
+LIB_CORAL_MODULE_API int LibCoralRun(LIB_CORAL_DEVICE_CONTAINER* container, const uint8_t* const data, const size_t size)
 {
-  std::lock_guard<std::mutex> lock(device->device_->mutex_);
-  uint8_t* input = device->device_->interpreter_->typed_input_tensor<uint8_t>(0);
+  std::lock_guard<std::mutex> lock(container->device_->mutex_);
+  uint8_t* input = container->device_->interpreter_->typed_input_tensor<uint8_t>(0);
   std::memcpy(input, data, size);
-  const TfLiteStatus status = device->device_->interpreter_->Invoke();
+  const TfLiteStatus status = container->device_->interpreter_->Invoke();
   if (status != TfLiteStatus::kTfLiteOk)
   {
     return 1;
   }
   // Collect results
-  device->results_ = GetDetectionResults(*device->device_->interpreter_, std::numeric_limits<float>::lowest(), std::numeric_limits<size_t>::max());
+  container->results_ = GetDetectionResults(*container->device_->interpreter_, std::numeric_limits<float>::lowest(), std::numeric_limits<size_t>::max());
   return 0;
 }
 
-LIB_CORAL_MODULE_API int LibCoralGetResultId(LIB_CORAL_DEVICE_CONTAINER* device, const size_t index)
+LIB_CORAL_MODULE_API int LibCoralGetResultId(LIB_CORAL_DEVICE_CONTAINER* container, const size_t index)
 {
-  return device->results_[index].id_;
+  return container->results_[index].id_;
 }
 
-LIB_CORAL_MODULE_API float LibCoralGetResultScore(LIB_CORAL_DEVICE_CONTAINER* device, const size_t index)
+LIB_CORAL_MODULE_API float LibCoralGetResultScore(LIB_CORAL_DEVICE_CONTAINER* container, const size_t index)
 {
-  return device->results_[index].score_;
+  return container->results_[index].score_;
 }
 
-LIB_CORAL_MODULE_API const float* const LibCoralGetResultBoundingBox(LIB_CORAL_DEVICE_CONTAINER* device, const size_t index)
+LIB_CORAL_MODULE_API const float* const LibCoralGetResultBoundingBox(LIB_CORAL_DEVICE_CONTAINER* container, const size_t index)
 {
-  return device->results_[index].boundingbox_.data();
+  return container->results_[index].boundingbox_.data();
 }
 
-LIB_CORAL_MODULE_API size_t LibCoralGetResultsSize(LIB_CORAL_DEVICE_CONTAINER* device)
+LIB_CORAL_MODULE_API size_t LibCoralGetResultsSize(LIB_CORAL_DEVICE_CONTAINER* container)
 {
-  return device->results_.size();
+  return container->results_.size();
 }
 
 }
