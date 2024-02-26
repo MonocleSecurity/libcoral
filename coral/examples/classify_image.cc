@@ -258,6 +258,14 @@ LIB_CORAL_MODULE_API void LibCoralDestroy(LIB_CORAL_CONTEXT* context)
 {
   if (context)
   {
+    for (LIB_CORAL_CONTEXT_RECORD& record : context->records_)
+    {
+      if (record.device_)
+      {
+        delete record.device_;
+        record.device_ = nullptr;
+      }
+    }
     delete context;
   }
 }
@@ -344,8 +352,7 @@ LIB_CORAL_MODULE_API LIB_CORAL_DEVICE_CONTAINER* LibCoralOpenDevice(LIB_CORAL_CO
 
 LIB_CORAL_MODULE_API void LibCoralCloseDevice(LIB_CORAL_DEVICE_CONTAINER* device)
 {
-  device->device_->interpreter_.reset();
-  device->device_->edgetpucontext_.reset();
+  delete device;
 }
 
 LIB_CORAL_MODULE_API const int* const LibCoralGetInputShape(LIB_CORAL_DEVICE_CONTAINER* device)
