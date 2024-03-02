@@ -39,7 +39,7 @@ done; \
 popd
 endef
 
-EXAMPLES_OUT_DIR   := $(MAKEFILE_DIR)/out/$(CPU)/examples
+EXAMPLES_OUT_DIR   := $(MAKEFILE_DIR)/out/$(CPU)
 
 .PHONY: all \
         clean \
@@ -47,11 +47,11 @@ EXAMPLES_OUT_DIR   := $(MAKEFILE_DIR)/out/$(CPU)/examples
 
 all:
 
-	bazel build $(BAZEL_BUILD_FLAGS) //coral/examples:coral \
-	                                 //coral/examples:main
+	bazel build $(BAZEL_BUILD_FLAGS) //coral:coral \
+	                                 //coral:main
 	mkdir -p $(EXAMPLES_OUT_DIR)
-	cp -f $(BAZEL_OUT_DIR)/coral/examples/libcoral.so \
-	      $(BAZEL_OUT_DIR)/coral/examples/main \
+	cp -f $(BAZEL_OUT_DIR)/coral/libcoral.so \
+	      $(BAZEL_OUT_DIR)/coral/main \
 	      $(EXAMPLES_OUT_DIR)
 
 clean:
