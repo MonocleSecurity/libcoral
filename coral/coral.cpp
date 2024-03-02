@@ -111,60 +111,9 @@ struct LIB_CORAL_DEVICE_CONTAINER
 
 ///// Functions /////
 
-std::vector<int> TensorShape(const TfLiteTensor& tensor)
-{
-  return std::vector<int>(tensor.dims->data, tensor.dims->data + tensor.dims->size);
-}
-
 absl::Span<const float> TensorData(const TfLiteTensor& tensor)
 {
   return absl::MakeSpan(reinterpret_cast<const float*>(tensor.data.data), tensor.bytes / sizeof(float));
-}
-
-TfLiteFloatArray* TfLiteFloatArrayCopy(const TfLiteFloatArray* src)
-{
-  if (!src)
-  {
-    return nullptr;
-  }
-  TfLiteFloatArray* copy = static_cast<TfLiteFloatArray*>(malloc(TfLiteFloatArrayGetSizeInBytes(src->size)));
-  copy->size = src->size;
-  std::memcpy(copy->data, src->data, src->size * sizeof(float));
-  return copy;
-}
-
-TfLiteAffineQuantization* TfLiteAffineQuantizationCopy(const TfLiteAffineQuantization* src)
-{
-  if (!src)
-  {
-    return nullptr;
-  }
-  TfLiteAffineQuantization* copy = static_cast<TfLiteAffineQuantization*>(malloc(sizeof(TfLiteAffineQuantization)));
-  copy->scale = TfLiteFloatArrayCopy(src->scale);
-  copy->zero_point = TfLiteIntArrayCopy(src->zero_point);
-  copy->quantized_dimension = src->quantized_dimension;
-  return copy;
-}
-
-int SetTensorBuffer(tflite::Interpreter* interpreter, int tensor_index, const void* buffer, size_t buffer_size)
-{
-  const auto* tensor = interpreter->tensor(tensor_index);
-  auto quantization = tensor->quantization;
-  if (quantization.type != kTfLiteNoQuantization)
-  {
-    // Deep copy quantization parameters.
-    if (quantization.type != kTfLiteAffineQuantization)
-    {
-      return 2;
-    }
-    quantization.params = TfLiteAffineQuantizationCopy(reinterpret_cast<TfLiteAffineQuantization*>(quantization.params));
-  }
-  const std::vector<int> shape = TensorShape(*tensor);
-  if (interpreter->SetTensorParametersReadOnly(tensor_index, tensor->type, tensor->name, std::vector<int>(shape.begin(), shape.end()), quantization, reinterpret_cast<const char*>(buffer), buffer_size) != kTfLiteOk)
-  {
-    return 3;
-  }
-  return 0;
 }
 
 std::vector<Object> GetDetectionResults(const absl::Span<const float> bboxes, const absl::Span<const float> ids, const absl::Span<const float> scores, const size_t count, const float threshold, const size_t topk)
