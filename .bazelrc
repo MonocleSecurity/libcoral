@@ -7,6 +7,13 @@ build --enable_platform_specific_config
 
 build:linux --crosstool_top=@crosstool//:toolchains
 build:linux --compiler=gcc
+# GCC 13+ no longer pulls these in transitively; TF 2.5 / absl / ruy / libedgetpu rely on it.
+build:linux --cxxopt=-include --cxxopt=cstddef
+build:linux --cxxopt=-include --cxxopt=cstdint
+build:linux --cxxopt=-include --cxxopt=limits
+# Keep flatbuffers consistent across TUs (util.cpp forces _XOPEN_SOURCE 600), else
+# ClassicLocale::instance_ ends up as an undefined symbol in libcoral.so.
+build:linux --copt=-DFLATBUFFERS_LOCALE_INDEPENDENT=0
 
 build:macos --cxxopt=-std=c++14
 
