@@ -80,9 +80,8 @@ struct LIB_CORAL_CONTEXT
 
 struct LIB_CORAL_DEVICE
 {
-  LIB_CORAL_DEVICE(LIB_CORAL_CONTEXT_RECORD* record, const std::shared_ptr<edgetpu::EdgeTpuContext>& edgetpucontext, std::unique_ptr<tflite::Interpreter>&& interpreter, const std::array<int, 3>& inputshape, const std::array<int, 3>& outputshape)
-    : record_(record)
-    , edgetpucontext_(edgetpucontext)
+  LIB_CORAL_DEVICE(const std::shared_ptr<edgetpu::EdgeTpuContext>& edgetpucontext, std::unique_ptr<tflite::Interpreter>&& interpreter, const std::array<int, 3>& inputshape, const std::array<int, 3>& outputshape)
+    : edgetpucontext_(edgetpucontext)
     , interpreter_(std::move(interpreter))
     , inputshape_(inputshape)
     , outputshape_(outputshape)
@@ -90,7 +89,6 @@ struct LIB_CORAL_DEVICE
   }
 
   mutable std::mutex mutex_;
-  LIB_CORAL_CONTEXT_RECORD* const record_;
   const std::shared_ptr<edgetpu::EdgeTpuContext> edgetpucontext_;
   const std::unique_ptr<tflite::Interpreter> interpreter_;
   const std::array<int, 3> inputshape_;
@@ -302,19 +300,25 @@ LIB_CORAL_MODULE_API LIB_CORAL_DEVICE_CONTAINER* LibCoralOpenDevice(LIB_CORAL_CO
     return nullptr;
   }
   // Piece it together
-  LIB_CORAL_DEVICE* device = new LIB_CORAL_DEVICE(&context->records_[index], edgetpucontext, std::move(interpreter), std::array<int, 3>({ inputdims->data[1], inputdims->data[2], inputdims->data[3] }), std::array<int, 3>({ outputdims->data[1], outputdims->data[2], outputdims->data[3] }));
+  LIB_CORAL_DEVICE* device = new LIB_CORAL_DEVICE(edgetpucontext, std::move(interpreter), std::array<int, 3>({ inputdims->data[1], inputdims->data[2], inputdims->data[3] }), std::array<int, 3>({ outputdims->data[1], outputdims->data[2], outputdims->data[3] }));
   context->records_[index].device_ = device;
   LIB_CORAL_DEVICE_CONTAINER* container = new LIB_CORAL_DEVICE_CONTAINER(device);
   context->records_[index].device_->containers_.push_back(container);
   return container;
 }
 
-LIB_CORAL_MODULE_API void LibCoralCloseDevice(LIB_CORAL_DEVICE_CONTAINER* container)
+LIB_CORAL_MODULE_API void LibCoralCloseDevice(LIB_CORAL_CONTEXT* context, LIB_CORAL_DEVICE_CONTAINER* container)
 {
   container->device_->containers_.erase(std::remove(container->device_->containers_.begin(), container->device_->containers_.end(), container), container->device_->containers_.end());
   if (container->device_->containers_.empty())
   {
-    container->device_->record_->device_ = nullptr;
+    for (LIB_CORAL_CONTEXT_RECORD& record : context->records_)
+    {
+      if (record.device_ == container->device_)
+      {
+        record.device_ = nullptr;
+      }
+    }
     delete container->device_;
   }
   delete container;

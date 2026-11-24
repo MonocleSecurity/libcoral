@@ -320,7 +320,7 @@ std::cout << "D" << std::endl;//TODO
 
 
   std::cout << "yay " << ret << std::endl;//TODO
-  closedevice(device);
+  closedevice(coralcontext, device);
   destroy(coralcontext);
 #ifdef _WIN32
   FreeLibrary(module);
